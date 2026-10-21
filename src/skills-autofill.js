@@ -60,8 +60,12 @@
     return String(value || "").replace(/\s+/g, " ").trim();
   }
 
+  // Видим = есть размеры И не спрятан через visibility. МЭШ (MUI) после
+  // закрытия формы может не убирать её из DOM, а прятать visibility:hidden —
+  // у такой формы размеры остаются, и раньше её принимали за открытую.
   function isVisible(el) {
-    return !!el && el.isConnected && el.getClientRects().length > 0;
+    if (!el || !el.isConnected || el.getClientRects().length === 0) return false;
+    return getComputedStyle(el).visibility !== "hidden";
   }
 
   // В скрытой (фоновой) вкладке Chrome замедляет setTimeout до раза в секунду,
@@ -288,22 +292,30 @@
     return containerWith(TXT_POPUP_TITLE, [TXT_OPEN_FORM, TXT_REOPEN_FORM, TXT_DETAILS]);
   }
 
-  function findForm() {
-    // Обычно — контейнер с заголовком и кнопкой «Сохранить». Запасной путь —
-    // контейнер с заголовком и вариантами ответа (если кнопка на миг сменила
-    // текст или перерисовывается).
-    return containerWith(TXT_FORM_TITLE, TXT_SAVE) || containerWithText(TXT_FORM_TITLE, ANY_OPTION);
-  }
-
-  function containerWithText(titleText, innerText) {
-    for (const title of textEls(titleText)) {
+  // Все видимые формы «Оценка учебных умений»: от каждого заголовка вверх до
+  // контейнера с кнопкой «Сохранить» или с вариантами ответа.
+  function formCandidates() {
+    const found = [];
+    for (const title of textEls(TXT_FORM_TITLE)) {
       let el = title.parentElement;
       while (el && el !== document.body) {
-        if (textEls(innerText, el).length) return el;
+        if (buttonsWithText(TXT_SAVE, el).length || textEls(ANY_OPTION, el).length) {
+          if (!found.includes(el)) found.push(el);
+          break;
+        }
         el = el.parentElement;
       }
     }
-    return null;
+    return found;
+  }
+
+  // Если на странице несколько форм (старая от прошлого ученика ещё в DOM),
+  // берём ту, в которой есть варианты ответа, а из таких — последнюю
+  // добавленную (новая выезжающая панель добавляется в конец body).
+  function findForm() {
+    const list = formCandidates();
+    const withOptions = list.filter((f) => textEls(ANY_OPTION, f).length);
+    return withOptions[withOptions.length - 1] || list[list.length - 1] || null;
   }
 
   // Форма МЭШ на долю секунды пропадает из DOM, когда перерисовывается
@@ -521,6 +533,7 @@
     return [
       `заголовок формы: ${titleInfo}`,
       `«Сохранить»: ${buttonsWithText(TXT_SAVE).length}`,
+      `форм видно: ${formCandidates().length}`,
       `попап: ${findPopup() ? "открыт" : "нет"}`,
       `диалог «Выход без сохранения»: ${textEls(TXT_DISCARD_TITLE).length ? "да" : "нет"}`,
       `вкладка: ${document.hidden ? "фоновая" : "видимая"}`
@@ -533,12 +546,13 @@
   // закрываем всё и пробуем ещё раз (до OPEN_ATTEMPTS).
   async function openFormFor(student, recheck) {
     let lastDiag = "";
+    let firstDiag = "";
     for (let attempt = 1; attempt <= OPEN_ATTEMPTS; attempt += 1) {
       if (stopRequested) return { result: { status: "stopped" } };
       if (attempt > 1) {
         // Форма «вернулась», пока мы собирались переоткрывать, — берём её.
         const back = await waitForForm(1500);
-        if (back) return { form: back, attempt: attempt - 1 };
+        if (back) return { form: back, attempt: attempt - 1, firstDiag };
         await cleanupAfterError();
         await sleep(pace(900, 400));
         setStatus(`${student.name}: форма пропала, открываю ещё раз (попытка ${attempt} из ${OPEN_ATTEMPTS})…`);
@@ -566,14 +580,16 @@
       }, FORM_TIMEOUT_MS);
       if (!opened) {
         lastDiag = describePage();
+        firstDiag = firstDiag || lastDiag;
         log(student.name, `форма не открылась (попытка ${attempt})`, lastDiag);
         continue;
       }
       // При перепроверке ждём дольше — нужно точно увидеть сохранённые ответы.
       await (recheck ? waitStable(1500, 10000) : waitStable(600, 8000));
       const form = findForm() || (await waitForForm());
-      if (form) return { form, attempt };
+      if (form) return { form, attempt, firstDiag };
       lastDiag = describePage();
+      firstDiag = firstDiag || lastDiag;
       log(student.name, `форма закрылась сама (попытка ${attempt})`, lastDiag);
     }
     return { result: { status: "error", message: `форма открывается и сразу закрывается (${OPEN_ATTEMPTS} попытки) — ${lastDiag}` } };
@@ -616,7 +632,7 @@
     if (result === "saved" || result === "already") {
       await sleep(pace(STEP_DELAY_MS, 60));
       await closePopup();
-      const retryNote = openedForm.attempt > 1 ? `, форма открылась с ${openedForm.attempt}-й попытки` : "";
+      const retryNote = openedForm.attempt > 1 ? `, форма открылась с ${openedForm.attempt}-й попытки; 1-я: ${openedForm.firstDiag}` : "";
       return { status: result, message: result === "saved" ? `сохранено (${stats.questions} пунктов${retryNote})` : "уже было заполнено" };
     }
     return {
