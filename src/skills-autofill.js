@@ -237,27 +237,87 @@
     return formStats(form);
   }
 
-  async function saveForm(form, stats) {
-    const saveBtn = buttonsWithText(TXT_SAVE, form)[0];
-    const enabled = await waitFor(() => (saveBtn && !isDisabled(saveBtn) ? saveBtn : null), SAVE_ENABLE_TIMEOUT_MS);
-    if (!enabled) {
-      // Кнопка неактивна, а всё уже отмечено — форма была заполнена раньше, изменений нет.
-      if (stats.questions && stats.checked >= stats.questions) {
+  // Ждём, пока страница перестанет перерисовываться: форма МЭШ может открыться
+  // пустой, а потом пересобраться, когда догрузятся данные ученика, — и тогда
+  // отметки, поставленные до этого, пропадают.
+  function waitStable(quietMs = 700, maxMs = 6000) {
+    return new Promise((resolve) => {
+      let timer = null;
+      const finish = () => {
+        observer.disconnect();
+        clearTimeout(timer);
+        clearTimeout(hardStop);
+        resolve();
+      };
+      const observer = new MutationObserver((mutations) => {
+        if (mutations.every((m) => m.target?.closest?.(`#${PANEL_ID}`) || m.target?.parentElement?.closest?.(`#${PANEL_ID}`))) return;
+        clearTimeout(timer);
+        timer = setTimeout(finish, quietMs);
+      });
+      observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+      timer = setTimeout(finish, quietMs);
+      const hardStop = setTimeout(finish, maxMs);
+    });
+  }
+
+  function isComplete(stats) {
+    return stats.questions > 0 && stats.checked >= stats.questions;
+  }
+
+  // Заполнить и убедиться, что отметки ДЕРЖАТСЯ после того, как страница успокоилась.
+  async function fillUntilStable() {
+    let stats = { questions: 0, checked: 0 };
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const form = findForm();
+      if (!form || stopRequested) return stats;
+      await fillForm(form);
+      await waitStable();
+      const fresh = findForm();
+      stats = fresh ? formStats(fresh) : stats;
+      if (isComplete(stats)) return stats;
+      log("после заполнения отметки слетели, повторяю", stats);
+    }
+    return stats;
+  }
+
+  function currentSaveButton() {
+    const form = findForm();
+    const btn = form && buttonsWithText(TXT_SAVE, form)[0];
+    return btn && !isDisabled(btn) ? btn : null;
+  }
+
+  async function saveForm(alreadyBefore) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (stopRequested) return "stopped";
+      const enabled = await waitFor(currentSaveButton, SAVE_ENABLE_TIMEOUT_MS);
+      if (enabled) {
+        realClick(enabled);
+        const closed = await waitFor(() => !findForm(), SAVE_CLOSE_TIMEOUT_MS);
+        return closed ? "saved" : "not-closed";
+      }
+      const form = findForm();
+      if (!form) return "not-closed";
+      const stats = formStats(form);
+      // «Уже было» — только если форма открылась УЖЕ заполненной (до наших кликов)
+      // и сейчас всё отмечено, а «Сохранить» неактивна из-за отсутствия изменений.
+      if (isComplete(stats)) {
         const cancel = buttonsWithText(TXT_CANCEL, form)[0];
         if (cancel) realClick(cancel);
         await waitFor(() => !findForm(), 4000);
-        return "already";
+        // Если форма открылась уже заполненной — это правда «уже было». Иначе
+        // (ответы догрузились после наших кликов) не верим и перепроверяем
+        // повторным открытием формы.
+        return alreadyBefore ? "already" : "recheck";
       }
-      return "save-disabled";
+      log("«Сохранить» неактивна — заполняю форму заново", stats);
+      await fillUntilStable();
     }
-    realClick(enabled);
-    const closed = await waitFor(() => !findForm(), SAVE_CLOSE_TIMEOUT_MS);
-    return closed ? "saved" : "not-closed";
+    return "save-disabled";
   }
 
   // ---------- один ученик ----------
 
-  async function processStudent(student, { save }) {
+  async function processStudent(student, { save, recheck = false }) {
     if (findForm()) return { status: "error", message: "уже открыта другая форма — закройте её" };
     await closePopup();
 
@@ -269,29 +329,40 @@
     if (!openBtn) return { status: "error", message: "нет кнопки «Оценить учебные умения»" };
     realClick(openBtn);
 
-    const form = await waitFor(() => {
+    const opened = await waitFor(() => {
       const f = findForm();
       return f && textEls(TARGET_OPTION, f).length ? f : null;
     }, FORM_TIMEOUT_MS);
-    if (!form) return { status: "error", message: "не открылась форма «Оценка учебных умений»" };
+    if (!opened) return { status: "error", message: "не открылась форма «Оценка учебных умений»" };
+    // При перепроверке ждём дольше — нужно точно увидеть сохранённые ответы.
+    await (recheck ? waitStable(1500, 10000) : waitStable(1000, 8000));
 
+    const form = findForm();
+    if (!form) return { status: "error", message: "форма закрылась сама", fatal: true };
     // Сверка: в шапке формы должна быть фамилия того, по кому кликнули.
     const surname = student.name.split(" ")[0];
     if (surname && !norm(form.textContent).includes(surname)) {
       return { status: "error", message: `в форме другой ученик (ожидался ${student.name})`, fatal: true };
     }
-    await sleep(STEP_DELAY_MS);
 
-    const stats = await fillForm(form);
+    const alreadyBefore = isComplete(formStats(form));
+    const stats = await fillUntilStable();
     if (stopRequested) return { status: "stopped" };
-    if (!stats.questions) return { status: "error", message: "в форме не найдено ни одного пункта" };
-    if (stats.checked < stats.questions) {
+    if (!stats.questions) return { status: "error", message: "в форме не найдено ни одного пункта", fatal: true };
+    if (!isComplete(stats)) {
       return { status: "error", message: `отмечено ${stats.checked} из ${stats.questions} — форма оставлена открытой`, fatal: true };
     }
 
     if (!save) return { status: "filled", message: `отмечено ${stats.checked} из ${stats.questions}, НЕ сохранено (проверка)` };
 
-    const result = await saveForm(form, stats);
+    const result = await saveForm(alreadyBefore);
+    if (result === "stopped") return { status: "stopped" };
+    if (result === "recheck") {
+      await closePopup();
+      if (recheck) return { status: "error", message: "не удалось подтвердить, что оценка сохранена", fatal: true };
+      log(student.name, "перепроверяю повторным открытием формы");
+      return processStudent(student, { save, recheck: true });
+    }
     if (result === "saved" || result === "already") {
       await sleep(STEP_DELAY_MS);
       await closePopup();
@@ -299,7 +370,7 @@
     }
     return {
       status: "error",
-      message: result === "save-disabled" ? "кнопка «Сохранить» неактивна" : "форма не закрылась после «Сохранить»",
+      message: result === "save-disabled" ? "кнопка «Сохранить» неактивна — форма оставлена открытой" : "форма не закрылась после «Сохранить»",
       fatal: true
     };
   }
@@ -359,7 +430,7 @@
       return;
     }
     stopRequested = false;
-    const stats = await fillForm(form);
+    const stats = await fillUntilStable();
     setStatus(`Отмечено «${TARGET_OPTION}»: ${stats.checked} из ${stats.questions}. Проверьте и нажмите «Сохранить».`, stats.checked >= stats.questions ? "ok" : "error");
   }
 
