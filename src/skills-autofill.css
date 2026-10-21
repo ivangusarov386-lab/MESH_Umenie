@@ -152,3 +152,97 @@
 #mesh-skills-cursor[hidden] {
   display: none;
 }
+
+#mesh-skills-panel .msa-btn-classes {
+  background: var(--msa-accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+#mesh-skills-panel .msa-btn-all {
+  background: var(--msa-surface);
+  color: var(--msa-accent);
+}
+
+#mesh-skills-panel .msa-picker[hidden],
+#mesh-skills-panel .msa-results[hidden] {
+  display: none;
+}
+
+#mesh-skills-panel .msa-picker,
+#mesh-skills-panel .msa-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--msa-muted);
+}
+
+#mesh-skills-panel .msa-picker-title[data-tone="error"] {
+  color: var(--msa-error);
+}
+
+#mesh-skills-panel .msa-picker-list {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+#mesh-skills-panel .msa-picker-item {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#mesh-skills-panel .msa-results {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+#mesh-skills-panel .msa-res-journal summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+#mesh-skills-panel .msa-res-journal summary[data-tone="ok"] {
+  color: var(--msa-ok);
+}
+
+#mesh-skills-panel .msa-res-journal summary[data-tone="error"] {
+  color: var(--msa-error);
+}
+
+#mesh-skills-panel .msa-res-note,
+#mesh-skills-panel .msa-res-list {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--msa-error);
+}
+
+#mesh-skills-panel .msa-res-list {
+  padding-left: 18px;
+}
+
+#mesh-skills-panel .msa-res-open {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--msa-accent);
+}
+
+#mesh-skills-panel .msa-res-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#mesh-skills-panel .msa-body {
+  max-height: calc(100vh - 90px);
+  overflow-y: auto;
+}

@@ -469,7 +469,185 @@
     };
   }
 
+  // ---------- хранилище ----------
+  // chrome.storage.local переживает переход между журналами (полную перезагрузку
+  // страницы). Без chrome.storage (макет в тестах) — память страницы.
+
+  const BATCH_KEY = "meshSkillsBatch";
+  const RESULTS_KEY = "meshSkillsResults";
+  const memoryStore = {};
+
+  function getStorage(key) {
+    const area = globalThis.chrome?.storage?.local;
+    if (!area) return Promise.resolve(memoryStore[key]);
+    return new Promise((resolve) => area.get(key, (data) => resolve(data?.[key])));
+  }
+
+  function setStorage(key, value) {
+    const area = globalThis.chrome?.storage?.local;
+    if (!area) {
+      memoryStore[key] = value;
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      area.set({ [key]: value }, () => {
+        const err = globalThis.chrome?.runtime?.lastError;
+        if (err) console.error("[МЭШ умения] ошибка записи в storage:", err.message);
+        resolve(!err);
+      });
+    });
+  }
+
+  // ---------- журнал и классы ----------
+
+  const MY_CLASSES_PATH = "/teacher/study-process/journal/my";
+  const CLASS_CARD_SELECTOR = '[data-test-component="journalCardRoute"]';
+  const PARALLEL_SECTION_SELECTOR = 'section[data-test-component^="journalListSection-"]';
+
+  function journalUrl(id) {
+    return `/teacher/study-process/journal/grade/${id}?logon_source=teacher_mentor_journals`;
+  }
+
+  function currentJournalId() {
+    const match = location.pathname.match(/\/journal\/grade\/(\d+)/);
+    return match ? match[1] : null;
+  }
+
+  function currentJournalTitle() {
+    const heading = [...document.querySelectorAll("h1, h2, h3, h4, h5, h6")].find((h) => /^Журнал\s/.test(norm(h.textContent)) && !isOwn(h));
+    return heading ? norm(heading.textContent).replace(/^Журнал\s+/, "") : norm(document.title);
+  }
+
+  function isMyClassesPage() {
+    return location.pathname === MY_CLASSES_PATH;
+  }
+
+  // Карточки классов на «Мои классы» — тот же проверенный способ, что в проекте mesh
+  // (class-auto-loader.js: collectMyClassesPage / expandAllParallels).
+  function collectMyClasses() {
+    const seen = new Set();
+    const list = [];
+    document.querySelectorAll(CLASS_CARD_SELECTOR).forEach((card) => {
+      const link = card.querySelector('a[href*="/journal/my/"]');
+      const match = link?.href.match(/\/journal\/my\/(\d+)/);
+      if (!match || seen.has(match[1])) return;
+      seen.add(match[1]);
+      const labelEl = card.querySelector(":scope > div:first-child span");
+      const classLabel = norm(labelEl?.textContent).replace(/\s*класс\s*$/i, "") || "?";
+      list.push({ id: match[1], text: norm(link.textContent), classLabel });
+    });
+    return list;
+  }
+
+  async function prepareMyClasses() {
+    await waitFor(() => document.querySelectorAll(PARALLEL_SECTION_SELECTOR).length > 0, 8000);
+    document.querySelectorAll(PARALLEL_SECTION_SELECTOR).forEach((section) => {
+      if (section.querySelector(CLASS_CARD_SELECTOR)) return;
+      section.querySelector("h6")?.click();
+    });
+    await waitFor(() => collectMyClasses().length > 0, 6000);
+    await sleep(500);
+    return collectMyClasses();
+  }
+
+  // ---------- результаты по журналам ----------
+
+  async function recordResult(journal, name, res) {
+    if (!journal?.id) return;
+    const all = (await getStorage(RESULTS_KEY)) || {};
+    const entry = all[journal.id] || { id: journal.id, title: journal.title, classLabel: journal.classLabel || "", students: {} };
+    entry.title = journal.title || entry.title;
+    entry.updatedAt = Date.now();
+    entry.students[name] = { status: res.status, message: res.message || "", at: Date.now() };
+    all[journal.id] = entry;
+    await setStorage(RESULTS_KEY, all);
+  }
+
+  async function markJournalNote(journal, note) {
+    if (!journal?.id) return;
+    const all = (await getStorage(RESULTS_KEY)) || {};
+    const entry = all[journal.id] || { id: journal.id, title: journal.title, classLabel: journal.classLabel || "", students: {} };
+    entry.note = note || "";
+    entry.updatedAt = Date.now();
+    all[journal.id] = entry;
+    await setStorage(RESULTS_KEY, all);
+  }
+
+  function countStatuses(entry) {
+    const c = { saved: 0, already: 0, error: 0 };
+    Object.values(entry?.students || {}).forEach((st) => {
+      if (c[st.status] !== undefined) c[st.status] += 1;
+    });
+    return c;
+  }
+
+  // ---------- уборка после ошибки ----------
+
+  async function cleanupAfterError() {
+    const form = findForm();
+    if (form) {
+      const cancel = buttonsWithText(TXT_CANCEL, form)[0];
+      if (cancel) await humanClick(cancel);
+      await waitFor(() => !findForm(), 4000);
+    }
+    await closePopup();
+    return !findForm() && !findPopup();
+  }
+
   // ---------- сценарии ----------
+
+  const MAX_ERRORS_IN_ROW = 3;
+
+  // Пройти всех учеников текущего журнала. Ошибка по ученику не останавливает
+  // обход: форма закрывается «Отменой», ученик попадает в результаты с ошибкой
+  // (дозаполнить вручную). Журнал бросаем, только если не удалось закрыть
+  // форму или ошибки идут подряд — значит, что-то сломалось системно.
+  async function runJournal({ limit = Infinity, save = true, journal = null, prefix = "" } = {}) {
+    const done = new Set();
+    const counters = { saved: 0, already: 0, error: 0 };
+    let errorsInRow = 0;
+    let aborted = "";
+    let processed = 0;
+    while (processed < limit && !stopRequested) {
+      let next = studentRows().find((s) => !done.has(s.name));
+      if (!next) {
+        // Таблица может дорисовывать строки при прокрутке — пробуем докрутить вниз.
+        const all = studentRows();
+        all[all.length - 1]?.nameEl.scrollIntoView({ block: "end" });
+        await sleep(600);
+        next = studentRows().find((s) => !done.has(s.name));
+        if (!next) break;
+      }
+      done.add(next.name);
+      processed += 1;
+      setStatus(`${prefix}${processed}. ${next.name}…`);
+
+      const res = await processStudent(next, { save });
+      if (res.status === "stopped") break;
+      if (counters[res.status] !== undefined) counters[res.status] += 1;
+      addLog(next.name, res.status, res.message);
+      log(next.name, res);
+      if (save) await recordResult(journal, next.name, res);
+
+      if (res.status === "error") {
+        errorsInRow += 1;
+        if (!save) break; // проверочный режим — оставляем всё как есть, чтобы было видно
+        const clean = await cleanupAfterError();
+        if (!clean) {
+          aborted = `не удалось закрыть форму после ошибки на «${next.name}»`;
+          break;
+        }
+        if (errorsInRow >= MAX_ERRORS_IN_ROW) {
+          aborted = `${MAX_ERRORS_IN_ROW} ошибки подряд — журнал прерван`;
+          break;
+        }
+      } else {
+        errorsInRow = 0;
+      }
+      await sleep(rand(250, 500));
+    }
+    return { counters, aborted, processed };
+  }
 
   async function runAll({ limit = Infinity, save = true } = {}) {
     if (running) return;
@@ -477,45 +655,143 @@
     stopRequested = false;
     clearLog();
     setBusy(true);
-
-    const done = new Set();
-    const counters = { saved: 0, already: 0, error: 0 };
     try {
-      let processed = 0;
-      while (processed < limit && !stopRequested) {
-        let next = studentRows().find((s) => !done.has(s.name));
-        if (!next) {
-          // Таблица может дорисовывать строки при прокрутке — пробуем докрутить вниз.
-          const all = studentRows();
-          all[all.length - 1]?.nameEl.scrollIntoView({ block: "end" });
-          await sleep(600);
-          next = studentRows().find((s) => !done.has(s.name));
-          if (!next) break;
-        }
-        done.add(next.name);
-        processed += 1;
-        setStatus(`${processed}. ${next.name}…`);
-
-        const res = await processStudent(next, { save });
-        if (res.status === "stopped") break;
-        if (counters[res.status] !== undefined) counters[res.status] += 1;
-        addLog(next.name, res.status, res.message);
-        log(next.name, res);
-        if (res.fatal) {
-          setStatus(`Остановлено на «${next.name}»: ${res.message}`, "error");
-          return;
-        }
-        await sleep(STEP_DELAY_MS);
-      }
-
-      const tail = stopRequested ? "Остановлено." : "Готово.";
+      const id = currentJournalId();
+      const journal = id ? { id, title: currentJournalTitle() } : null;
+      const { counters, aborted } = await runJournal({ limit, save, journal });
+      if (aborted) await markJournalNote(journal, aborted);
+      const tail = stopRequested ? "Остановлено." : aborted ? `Прервано: ${aborted}.` : "Готово.";
       if (!save) setStatus(`${tail} Форма заполнена, сохраните вручную или нажмите «Отмена».`);
-      else setStatus(`${tail} Сохранено: ${counters.saved}, уже было: ${counters.already}, ошибок: ${counters.error}.`, counters.error ? "error" : "ok");
+      else setStatus(`${tail} Сохранено: ${counters.saved}, уже было: ${counters.already}, ошибок: ${counters.error}.`, counters.error || aborted ? "error" : "ok");
+      renderResults();
     } finally {
       hideCursor();
       running = false;
       setBusy(false);
     }
+  }
+
+  // ---------- все классы ----------
+  // Батч в chrome.storage.local: { status, queue: [{id, text, classLabel}], index,
+  // startedAt, visits }. Каждый журнал открывается в ЭТОЙ вкладке (как кликом),
+  // после перезагрузки страницы скрипт находит батч и продолжает.
+
+  async function startAllClasses(selected) {
+    if (!selected.length) {
+      setStatus("Не выбрано ни одного класса.", "error");
+      return;
+    }
+    await setStorage(BATCH_KEY, { status: "running", queue: selected, index: 0, startedAt: Date.now(), visits: 0 });
+    setStatus(`Старт: классов — ${selected.length}. Перехожу в первый журнал…`);
+    await sleep(rand(500, 900));
+    location.href = journalUrl(selected[0].id);
+  }
+
+  async function goToMyClassesAndPick() {
+    if (isMyClassesPage()) {
+      await showClassPicker();
+      return;
+    }
+    await setStorage(BATCH_KEY, { status: "picking" });
+    location.href = MY_CLASSES_PATH;
+  }
+
+  async function finishBatch(batch, message) {
+    batch.status = "done";
+    batch.finishedAt = Date.now();
+    await setStorage(BATCH_KEY, batch);
+    setStatus(message, "ok");
+    showResultsSection(true);
+    renderResults();
+  }
+
+  async function resumeBatchIfRunning() {
+    const batch = await getStorage(BATCH_KEY);
+    if (!batch) return;
+    if (batch.status === "picking") {
+      if (!isMyClassesPage()) return;
+      await setStorage(BATCH_KEY, { status: "idle" });
+      forcedVisible = true;
+      ensurePanel();
+      await showClassPicker();
+      return;
+    }
+    if (batch.status !== "running") return;
+
+    const item = batch.queue[batch.index];
+    if (!item) return finishBatch(batch, "Все классы пройдены.");
+    forcedVisible = true;
+    ensurePanel();
+    const prefix = `Класс ${batch.index + 1} из ${batch.queue.length} (${item.classLabel || item.text}) · `;
+
+    // Открылся не тот журнал (редирект МЭШ, ручной переход) — возвращаемся,
+    // но не бесконечно: после 3 попыток класс пропускаем.
+    if (currentJournalId() !== String(item.id)) {
+      batch.visits = (batch.visits || 0) + 1;
+      if (batch.visits > 3) {
+        await markJournalNote({ id: item.id, title: item.text, classLabel: item.classLabel }, "журнал не открылся — пропущен");
+        batch.index += 1;
+        batch.visits = 0;
+      }
+      await setStorage(BATCH_KEY, batch);
+      const next = batch.queue[batch.index];
+      if (!next) return finishBatch(batch, "Все классы пройдены.");
+      location.href = journalUrl(next.id);
+      return;
+    }
+
+    running = true;
+    stopRequested = false;
+    clearLog();
+    setBusy(true);
+    try {
+      setStatus(`${prefix}жду загрузки журнала…`);
+      const ok = await waitFor(() => studentRows().length > 0, 25000, 300);
+      await waitStable(1000, 8000);
+      const journal = { id: item.id, title: currentJournalTitle() || item.text, classLabel: item.classLabel };
+      let aborted = "";
+      if (!ok) {
+        aborted = "в журнале не найдены ученики";
+      } else {
+        const res = await runJournal({ save: true, journal, prefix });
+        aborted = res.aborted;
+      }
+      await markJournalNote(journal, aborted);
+
+      const fresh = await getStorage(BATCH_KEY);
+      if (stopRequested || fresh?.status !== "running") {
+        if (fresh) {
+          fresh.status = "stopped";
+          await setStorage(BATCH_KEY, fresh);
+        }
+        setStatus("Остановлено. Результаты сохранены — см. «Результаты».", "error");
+        showResultsSection(true);
+        renderResults();
+        return;
+      }
+      fresh.index += 1;
+      fresh.visits = 0;
+      await setStorage(BATCH_KEY, fresh);
+      const next = fresh.queue[fresh.index];
+      if (!next) return finishBatch(fresh, `Готово: пройдено классов — ${fresh.queue.length}. Ошибки — в «Результатах».`);
+      setStatus(`Класс готов${aborted ? ` (${aborted})` : ""}. Перехожу к следующему: ${next.classLabel || next.text}…`);
+      await sleep(rand(900, 1600));
+      location.href = journalUrl(next.id);
+    } finally {
+      hideCursor();
+      running = false;
+      setBusy(false);
+    }
+  }
+
+  async function stopEverything() {
+    stopRequested = true;
+    const batch = await getStorage(BATCH_KEY);
+    if (batch?.status === "running") {
+      batch.status = "stopped";
+      await setStorage(BATCH_KEY, batch);
+    }
+    setStatus("Останавливаю после текущего шага…");
   }
 
   async function fillOpenForm() {
@@ -572,6 +848,112 @@
     });
   }
 
+  // Выбор классов: все отмечены, можно снять лишние.
+  async function showClassPicker() {
+    const box = panel()?.querySelector(".msa-picker");
+    if (!box) return;
+    box.hidden = false;
+    box.textContent = "";
+    box.append(el("div", { class: "msa-picker-title" }, "Ищу классы…"));
+    const classes = await prepareMyClasses();
+    box.textContent = "";
+    if (!classes.length) {
+      box.append(el("div", { class: "msa-picker-title", "data-tone": "error" }, "Карточки классов не найдены. Разверните параллели и нажмите «Все мои классы» ещё раз."));
+      return;
+    }
+    box.append(el("div", { class: "msa-picker-title" }, `Классов: ${classes.length}. Снимите лишние галочки:`));
+    const list = el("div", { class: "msa-picker-list" });
+    classes.forEach((cls, i) => {
+      const label = el("label", { class: "msa-picker-item" });
+      const cb = el("input", { type: "checkbox", "data-index": String(i) });
+      cb.checked = true;
+      label.append(cb, document.createTextNode(` ${cls.classLabel} — ${cls.text}`));
+      list.append(label);
+    });
+    box.append(list);
+    const start = el("button", { class: "msa-btn msa-btn-all" }, "Начать по выбранным классам");
+    start.addEventListener("click", () => {
+      const chosen = [...list.querySelectorAll("input[type=checkbox]")].filter((c) => c.checked).map((c) => classes[Number(c.dataset.index)]);
+      box.hidden = true;
+      startAllClasses(chosen);
+    });
+    box.append(start);
+  }
+
+  function showResultsSection(open) {
+    const box = panel()?.querySelector(".msa-results");
+    if (box) box.hidden = !open;
+  }
+
+  const STATUS_TEXT = { saved: "сохранено", already: "уже оценён", error: "ошибка", filled: "заполнено без сохранения" };
+
+  async function renderResults() {
+    const box = panel()?.querySelector(".msa-results");
+    if (!box || box.hidden) return;
+    const all = (await getStorage(RESULTS_KEY)) || {};
+    const entries = Object.values(all).sort((a, b) => String(a.classLabel || a.title).localeCompare(String(b.classLabel || b.title), "ru", { numeric: true }));
+    box.textContent = "";
+    if (!entries.length) {
+      box.append(el("div", { class: "msa-picker-title" }, "Результатов пока нет."));
+      return;
+    }
+    entries.forEach((entry) => {
+      const c = countStatuses(entry);
+      const details = el("details", { class: "msa-res-journal" });
+      if (c.error || entry.note) details.open = true;
+      const summary = el("summary", { "data-tone": c.error || entry.note ? "error" : "ok" });
+      summary.textContent = `${entry.classLabel ? `${entry.classLabel} · ` : ""}${entry.title} — сохранено ${c.saved}, уже ${c.already}, ошибок ${c.error}`;
+      details.append(summary);
+      if (entry.note) details.append(el("div", { class: "msa-res-note" }, `⚠ ${entry.note}`));
+      const errors = Object.entries(entry.students).filter(([, st]) => st.status === "error");
+      if (errors.length) {
+        const ul = el("ul", { class: "msa-res-list" });
+        errors.forEach(([name, st]) => ul.append(el("li", {}, `${name} — ${st.message}`)));
+        details.append(ul);
+      }
+      const open = el("a", { href: journalUrl(entry.id), class: "msa-res-open" }, "Открыть журнал");
+      details.append(open);
+      box.append(details);
+    });
+    const actions = el("div", { class: "msa-res-actions" });
+    const csv = el("button", { class: "msa-btn" }, "Скачать отчёт (CSV)");
+    csv.addEventListener("click", downloadResultsCsv);
+    const clear = el("button", { class: "msa-btn msa-btn-stop" }, "Очистить результаты");
+    clear.addEventListener("click", async () => {
+      if (!confirm("Удалить сохранённые результаты по всем классам?")) return;
+      await setStorage(RESULTS_KEY, {});
+      renderResults();
+    });
+    actions.append(csv, clear);
+    box.append(actions);
+  }
+
+  // CSV-инъекция формул (OWASP): значения, начинающиеся с = + - @ таб, экранируем
+  // ведущим апострофом — как в проекте mesh.
+  function csvValue(value) {
+    let str = String(value ?? "");
+    if (/^[=+\-@\t\r]/.test(str)) str = "'" + str;
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+
+  async function downloadResultsCsv() {
+    const all = (await getStorage(RESULTS_KEY)) || {};
+    const rows = [["Класс", "Журнал", "Ученик", "Результат", "Подробности", "Когда"]];
+    Object.values(all).forEach((entry) => {
+      Object.entries(entry.students).forEach(([name, st]) => {
+        rows.push([entry.classLabel || "", entry.title, name, STATUS_TEXT[st.status] || st.status, st.message, new Date(st.at).toLocaleString("ru-RU")]);
+      });
+      if (entry.note) rows.push([entry.classLabel || "", entry.title, "", "журнал", entry.note, new Date(entry.updatedAt).toLocaleString("ru-RU")]);
+    });
+    const text = "﻿" + rows.map((r) => r.map(csvValue).join(";")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
+    const a = el("a", { href: url, download: `учебные-умения-${new Date().toISOString().slice(0, 10)}.csv` });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
   let forcedVisible = false;
 
   function isJournalPage() {
@@ -583,6 +965,11 @@
     const counter = root?.querySelector(".msa-count");
     if (!counter) return;
     const n = studentRows().length;
+    if (isMyClassesPage()) {
+      counter.textContent = "Страница «Мои классы».";
+      counter.dataset.tone = "";
+      return;
+    }
     counter.textContent = n ? `Учеников в журнале: ${n}` : "Ученики не найдены — откройте журнал предмета.";
     counter.dataset.tone = n ? "" : "error";
   }
@@ -610,23 +997,35 @@
     const body = el("div", { class: "msa-body" });
     body.append(el("p", { class: "msa-hint" }, `Во всех пунктах ставится «${TARGET_OPTION}».`));
     const buttons = [
-      ["all", "Все ученики — заполнить и сохранить", () => runAll({ save: true })],
+      ["classes", "Все мои классы — по очереди", () => goToMyClassesAndPick()],
+      ["all", "Этот журнал — заполнить и сохранить", () => runAll({ save: true })],
       ["one", "Проверка на 1 ученике (без сохранения)", () => runAll({ limit: 1, save: false })],
       ["form", "Заполнить открытую форму", () => fillOpenForm()],
-      ["stop", "Стоп", () => { stopRequested = true; setStatus("Останавливаю после текущего шага…"); }]
+      ["stop", "Стоп", () => stopEverything()]
     ];
     buttons.forEach(([action, label, handler]) => {
       const b = el("button", { "data-action": action, class: `msa-btn msa-btn-${action}` }, label);
       b.addEventListener("click", handler);
       body.append(b);
     });
+    const picker = el("div", { class: "msa-picker" });
+    picker.hidden = true;
+    body.append(picker);
     body.append(el("div", { class: "msa-count" }));
     body.append(el("div", { class: "msa-status" }, "Нажмите кнопку, чтобы начать."));
     body.append(el("ol", { class: "msa-log" }));
+    const resultsToggle = el("button", { class: "msa-btn msa-btn-results" }, "Результаты по классам");
+    const results = el("div", { class: "msa-results" });
+    results.hidden = true;
+    resultsToggle.addEventListener("click", () => {
+      results.hidden = !results.hidden;
+      renderResults();
+    });
+    body.append(resultsToggle, results);
 
     root.append(head, body);
     document.body.append(root);
-    setBusy(false);
+    setBusy(running);
     refreshStudentCount();
     log("панель показана, учеников найдено:", studentRows().length);
   }
@@ -642,8 +1041,9 @@
     }
   });
 
-  window.__MESH_SKILLS_AUTOFILL__ = { runAll, fillOpenForm, studentRows, findPopup, findForm, stop: () => { stopRequested = true; } };
+  window.__MESH_SKILLS_AUTOFILL__ = { runAll, fillOpenForm, studentRows, findPopup, findForm, collectMyClasses, stop: stopEverything };
 
   setInterval(ensurePanel, 1500);
   ensurePanel();
+  resumeBatchIfRunning();
 })();

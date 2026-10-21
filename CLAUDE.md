@@ -44,6 +44,29 @@ Chrome MV3 расширение для `school.mos.ru`: в журнале учи
 - «Уже было заполнено» — только если форма ОТКРЫЛАСЬ уже заполненной. Если
   «Сохранить» неактивна после наших кликов — форма закрывается и открывается
   заново для перепроверки; не подтвердилось — останов с ошибкой.
+- **Все мои классы** (`goToMyClassesAndPick` → `showClassPicker` →
+  `startAllClasses` → `resumeBatchIfRunning`): список классов — карточки
+  `[data-test-component="journalCardRoute"]` со ссылкой `/journal/my/<id>` на
+  странице `/teacher/study-process/journal/my` (свёрнутые параллели
+  раскрываются кликом по `h6` секции `journalListSection-*`) — проверенный
+  способ из mesh `class-auto-loader.js`. Журнал открывается в ЭТОЙ вкладке по
+  `/teacher/study-process/journal/grade/<id>?logon_source=teacher_mentor_journals`;
+  состояние — `chrome.storage.local` `meshSkillsBatch` `{status: picking|running|
+  done|stopped, queue, index, visits}`, после перезагрузки страницы скрипт
+  продолжает с текущего журнала. Не тот журнал открылся — возврат, после 3
+  попыток класс пропускается.
+- Ошибка по ученику обход НЕ останавливает: форма закрывается «Отменой»,
+  ученик пишется в результаты. Журнал бросаем, если форму не удалось закрыть
+  или 3 ошибки подряд (системная поломка). В режиме «Проверка на 1 ученике»
+  форма остаётся открытой.
+- Результаты — `meshSkillsResults` `{<journalId>: {title, classLabel, note,
+  students: {<ФИО>: {status, message, at}}}}`, пишутся после КАЖДОГО ученика
+  (и в одиночном журнале, и в обходе классов), повторный прогон обновляет
+  статус ученика. В панели «Результаты по классам»: по журналу счётчики,
+  список ошибок, ссылка «Открыть журнал», CSV-отчёт (с `csvValue` против
+  формульной инъекции, как в mesh).
+- В регэкспах с кириллицей не использовать `\b` — в JS он ASCII-only
+  (`/^Журнал\b/` не совпадает с «Журнал Физ…»), писать `\s`.
 - Ручное управление из консоли (контекст content script):
   `window.__MESH_SKILLS_AUTOFILL__.runAll({ limit: 1, save: false })`.
 
@@ -59,4 +82,7 @@ Chrome MV3 расширение для `school.mos.ru`: в журнале учи
 `node --check src/skills-autofill.js` и прогон в Chromium (Playwright,
 `executablePath: /opt/pw-browsers/chromium-1194/chrome-linux/chrome`) на
 макете страницы с журналом, попапом и формой — макет держать в scratchpad,
-не в репозитории.
+не в репозитории. Для обхода классов — сквозной тест с НАСТОЯЩИМ
+расширением: `launchPersistentContext` с `--load-extension`, а
+`context.route('https://school.mos.ru/**')` отдаёт макеты «Мои классы» и
+журналов (content script тогда внедряется как на живом сайте).
