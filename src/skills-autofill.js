@@ -22,7 +22,12 @@
 
   const PANEL_ID = "mesh-skills-panel";
   const CURSOR_ID = "mesh-skills-cursor";
-  const TARGET_OPTION = "Почти всегда";
+  // Варианты ответа одинаковы во всех пунктах формы (скриншот пользователя).
+  // Какой ставить — выбирается в панели, хранится в meshSkillsAnswer.
+  const ANSWER_OPTIONS = ["Почти никогда", "Редко", "Часто", "Почти всегда", "Затрудняюсь ответить"];
+  const ANSWER_KEY = "meshSkillsAnswer";
+  let targetOption = "Почти всегда";
+  // По этому варианту считаем число пунктов в форме (он есть в каждом пункте).
   const ANY_OPTION = "Почти никогда";
   const TXT_POPUP_TITLE = "Информация об учащемся";
   const TXT_OPEN_FORM = "Оценить учебные умения";
@@ -56,7 +61,22 @@
     return !!el && el.isConnected && el.getClientRects().length > 0;
   }
 
+  // В скрытой (фоновой) вкладке Chrome замедляет setTimeout до раза в секунду,
+  // а через 5 минут — до раза в минуту. Поэтому там «спим» через service
+  // worker расширения: его таймеры не замедляются, а ответ приходит событием.
   function sleep(ms) {
+    if (document.hidden && globalThis.chrome?.runtime?.id) {
+      return new Promise((resolve) => {
+        try {
+          chrome.runtime.sendMessage({ source: "mesh-skills", type: "sleep", ms }, () => {
+            void chrome.runtime.lastError;
+            resolve();
+          });
+        } catch (error) {
+          setTimeout(resolve, ms);
+        }
+      });
+    }
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
@@ -177,6 +197,26 @@
 
   async function humanClick(el) {
     if (!el || !el.isConnected) return;
+    // Фоновая вкладка: смотреть некому — без анимации указателя и плавной прокрутки,
+    // но с той же последовательностью событий и человеческими паузами.
+    if (document.hidden) {
+      if (!inView(el)) el.scrollIntoView({ block: "center", inline: "nearest" });
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width * (0.3 + Math.random() * 0.4);
+      const y = r.top + r.height * (0.35 + Math.random() * 0.3);
+      fire(el, "pointerover", x, y);
+      fire(el, "mouseover", x, y);
+      fire(el, "pointermove", x, y);
+      fire(el, "mousemove", x, y);
+      await sleep(pace(rand(40, 110), 15));
+      fire(el, "pointerdown", x, y);
+      fire(el, "mousedown", x, y);
+      await sleep(pace(rand(45, 95), 20));
+      fire(el, "pointerup", x, y);
+      fire(el, "mouseup", x, y);
+      el.click();
+      return;
+    }
     if (!inView(el)) {
       el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
       await sleep(pace(rand(320, 480), 160));
@@ -282,7 +322,7 @@
   // быстро щёлкает мышкой. Возвращает число кликов.
   async function fillVisible(form) {
     let clicks = 0;
-    for (const el of textEls(TARGET_OPTION, form)) {
+    for (const el of textEls(targetOption, form)) {
       if (stopRequested) break;
       if (!el.isConnected) continue;
       const opt = optionState(el);
@@ -296,7 +336,7 @@
   }
 
   function scrollableIn(form) {
-    const probe = textEls(TARGET_OPTION, form)[0];
+    const probe = textEls(targetOption, form)[0];
     let el = probe?.parentElement;
     while (el && el !== form.parentElement) {
       const style = getComputedStyle(el);
@@ -309,7 +349,7 @@
   function formStats(form) {
     const questions = textEls(ANY_OPTION, form).length;
     let checked = 0;
-    textEls(TARGET_OPTION, form).forEach((el) => {
+    textEls(targetOption, form).forEach((el) => {
       if (optionState(el).checked) checked += 1;
     });
     return { questions, checked };
@@ -341,24 +381,22 @@
   // Ждём, пока страница перестанет перерисовываться: форма МЭШ может открыться
   // пустой, а потом пересобраться, когда догрузятся данные ученика, — и тогда
   // отметки, поставленные до этого, пропадают.
-  function waitStable(quietMs = 700, maxMs = 6000) {
-    return new Promise((resolve) => {
-      let timer = null;
-      const finish = () => {
-        observer.disconnect();
-        clearTimeout(timer);
-        clearTimeout(hardStop);
-        resolve();
-      };
-      const observer = new MutationObserver((mutations) => {
-        if (mutations.every((m) => isOwn(m.target))) return;
-        clearTimeout(timer);
-        timer = setTimeout(finish, quietMs);
-      });
-      observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
-      timer = setTimeout(finish, quietMs);
-      const hardStop = setTimeout(finish, maxMs);
+  // Опрос через sleep(), а не setTimeout-цепочки — чтобы и в фоновой вкладке
+  // не замедлялось (см. sleep).
+  async function waitStable(quietMs = 700, maxMs = 6000) {
+    const start = Date.now();
+    let last = Date.now();
+    const observer = new MutationObserver((mutations) => {
+      if (!mutations.every((m) => isOwn(m.target))) last = Date.now();
     });
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+    try {
+      while (Date.now() - last < quietMs && Date.now() - start < maxMs) {
+        await sleep(100);
+      }
+    } finally {
+      observer.disconnect();
+    }
   }
 
   function isComplete(stats) {
@@ -441,7 +479,7 @@
 
     const opened = await waitFor(() => {
       const f = findForm();
-      return f && textEls(TARGET_OPTION, f).length ? f : null;
+      return f && textEls(targetOption, f).length ? f : null;
     }, FORM_TIMEOUT_MS);
     if (!opened) return { status: "error", message: "не открылась форма «Оценка учебных умений»" };
     // При перепроверке ждём дольше — нужно точно увидеть сохранённые ответы.
@@ -697,16 +735,110 @@
   // startedAt, visits }. Каждый журнал открывается в ЭТОЙ вкладке (как кликом),
   // после перезагрузки страницы скрипт находит батч и продолжает.
 
+  // Обход идёт в отдельной ФОНОВОЙ вкладке (её открывает service worker),
+  // а панель в текущей вкладке только показывает ход работы.
   async function startAllClasses(selected) {
     if (!selected.length) {
       setStatus("Не выбрано ни одного класса.", "error");
       return;
     }
-    await setStorage(BATCH_KEY, { status: "running", queue: selected, index: 0, startedAt: Date.now(), visits: 0 });
-    setStatus(`Старт: классов — ${selected.length}. Перехожу в первый журнал…`);
-    await sleep(pace(rand(500, 900), 150));
-    location.href = journalUrl(selected[0].id);
+    const canBackground = !!globalThis.chrome?.runtime?.id;
+    await setStorage(PROGRESS_KEY, { text: "Открываю фоновую вкладку…", tone: "", fraction: null, log: [], at: Date.now() });
+    await setStorage(BATCH_KEY, { status: "running", mode: canBackground ? "background" : "same-tab", queue: selected, index: 0, startedAt: Date.now(), visits: 0 });
+    if (!canBackground) {
+      setStatus(`Старт: классов — ${selected.length}. Перехожу в первый журнал…`);
+      await sleep(pace(rand(500, 900), 150));
+      location.href = journalUrl(selected[0].id);
+      return;
+    }
+    setBusy(true);
+    clearLog();
+    setStatus(`Обход ${selected.length} класс(ов) идёт в фоновой вкладке — можно работать дальше.`);
+    chrome.runtime.sendMessage({ source: "mesh-skills", type: "start-worker", url: location.origin + journalUrl(selected[0].id) }, (res) => {
+      void chrome.runtime.lastError;
+      if (!res?.ok) setStatus("Не удалось открыть фоновую вкладку.", "error");
+    });
   }
+
+  // ---------- рабочая вкладка и наблюдатели ----------
+
+  const PROGRESS_KEY = "meshSkillsProgress";
+  let isWorker = false;
+  const progressState = { text: "", tone: "", fraction: null, log: [] };
+  let progressTimer = null;
+
+  // Рабочая вкладка пересылает свой статус/ленту в storage — их показывают
+  // панели во всех остальных вкладках МЭШ.
+  function broadcastProgress() {
+    if (!isWorker || progressTimer) return;
+    progressTimer = setTimeout(() => {
+      progressTimer = null;
+      setStorage(PROGRESS_KEY, { ...progressState, log: progressState.log.slice(-60), at: Date.now() });
+    }, 250);
+  }
+
+  function myTabId() {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ source: "mesh-skills", type: "whoami" }, (res) => {
+          void chrome.runtime.lastError;
+          resolve(res?.tabId ?? null);
+        });
+      } catch (error) {
+        resolve(null);
+      }
+    });
+  }
+
+  function closeWorkerTab() {
+    try {
+      chrome.runtime.sendMessage({ source: "mesh-skills", type: "close-tab" }, () => void chrome.runtime.lastError);
+    } catch (error) {}
+  }
+
+  function applyProgress(progress) {
+    if (isWorker || !progress) return;
+    const root = panel();
+    if (!root) return;
+    const status = root.querySelector(".msa-status");
+    if (status) {
+      status.textContent = progress.text || "";
+      status.dataset.tone = progress.tone || "";
+    }
+    setProgressBar(progress.fraction);
+    const list = root.querySelector(".msa-log");
+    if (list) {
+      list.textContent = "";
+      (progress.log || []).forEach((item) => list.append(logItem(item.name, item.status, item.message)));
+      list.scrollTop = list.scrollHeight;
+    }
+  }
+
+  async function applyBatchState(batch) {
+    if (isWorker) return;
+    const isRunning = batch?.status === "running" && batch?.mode === "background";
+    if (!running) setBusy(isRunning);
+    if (!isRunning && (batch?.status === "done" || batch?.status === "stopped") && batch.finishedAt !== watchedFinish) {
+      watchedFinish = batch.finishedAt;
+      if (batch.status === "stopped") {
+        setStatus(`Обход остановлен${batch.stopReason ? `: ${batch.stopReason}` : ""}. Результаты сохранены.`, "error");
+      }
+      showResultsSection(true);
+      renderResults();
+    }
+  }
+  let watchedFinish = null;
+
+  globalThis.chrome?.storage?.onChanged?.addListener((changes, area) => {
+    if (area !== "local") return;
+    if (changes[PROGRESS_KEY]) applyProgress(changes[PROGRESS_KEY].newValue);
+    if (changes[BATCH_KEY]) {
+      const batch = changes[BATCH_KEY].newValue;
+      if (isWorker && batch?.status !== "running") stopRequested = true;
+      applyBatchState(batch);
+    }
+    if (changes[RESULTS_KEY]) renderResults();
+  });
 
   // Список классов берётся только со страницы «Мои классы» — туда переходим,
   // собираем, кладём в кэш и сразу открываем выбор.
@@ -735,8 +867,16 @@
   async function finishBatch(batch, message) {
     batch.status = "done";
     batch.finishedAt = Date.now();
-    await setStorage(BATCH_KEY, batch);
     setStatus(message, "ok");
+    setProgressBar(null);
+    if (isWorker) {
+      await setStorage(PROGRESS_KEY, { ...progressState, log: progressState.log.slice(-60), at: Date.now() });
+      await setStorage(BATCH_KEY, batch);
+      await sleep(600);
+      closeWorkerTab();
+      return;
+    }
+    await setStorage(BATCH_KEY, batch);
     showResultsSection(true);
     renderResults();
   }
@@ -754,6 +894,25 @@
       return;
     }
     if (batch.status !== "running") return;
+
+    if (batch.mode === "background") {
+      // Эту ли вкладку открыли для обхода? tabId пишется сразу после её
+      // создания — может не успеть, поэтому подождём.
+      const me = await myTabId();
+      let fresh = batch;
+      for (let i = 0; i < 20 && me && fresh?.status === "running" && fresh.tabId === undefined; i += 1) {
+        await sleep(150);
+        fresh = await getStorage(BATCH_KEY);
+      }
+      if (!me || fresh?.tabId !== me) {
+        // Обычная вкладка: только показываем ход обхода.
+        ensurePanel();
+        applyBatchState(fresh);
+        applyProgress(await getStorage(PROGRESS_KEY));
+        return;
+      }
+      isWorker = true;
+    }
 
     const item = batch.queue[batch.index];
     if (!item) return finishBatch(batch, "Все классы пройдены.");
@@ -797,11 +956,22 @@
 
       const fresh = await getStorage(BATCH_KEY);
       if (stopRequested || fresh?.status !== "running") {
+        setStatus("Остановлено. Результаты сохранены — см. «Результаты».", "error");
+        if (isWorker) {
+          await setStorage(PROGRESS_KEY, { ...progressState, log: progressState.log.slice(-60), at: Date.now() });
+          if (fresh && fresh.status === "running") {
+            fresh.status = "stopped";
+            fresh.finishedAt = Date.now();
+            await setStorage(BATCH_KEY, fresh);
+          }
+          closeWorkerTab();
+          return;
+        }
         if (fresh) {
           fresh.status = "stopped";
+          fresh.finishedAt = Date.now();
           await setStorage(BATCH_KEY, fresh);
         }
-        setStatus("Остановлено. Результаты сохранены — см. «Результаты».", "error");
         showResultsSection(true);
         renderResults();
         return;
@@ -826,6 +996,8 @@
     const batch = await getStorage(BATCH_KEY);
     if (batch?.status === "running") {
       batch.status = "stopped";
+      batch.finishedAt = Date.now();
+      batch.stopReason = "остановлено кнопкой «Стоп»";
       await setStorage(BATCH_KEY, batch);
     }
     setStatus("Останавливаю после текущего шага…");
@@ -840,7 +1012,7 @@
     stopRequested = false;
     const stats = await fillUntilStable();
     hideCursor();
-    setStatus(`Отмечено «${TARGET_OPTION}»: ${stats.checked} из ${stats.questions}. Проверьте и нажмите «Сохранить».`, stats.checked >= stats.questions ? "ok" : "error");
+    setStatus(`Отмечено «${targetOption}»: ${stats.checked} из ${stats.questions}. Проверьте и нажмите «Сохранить».`, stats.checked >= stats.questions ? "ok" : "error");
   }
 
   // ---------- панель ----------
@@ -899,6 +1071,12 @@
   }
 
   function setProgress(fraction) {
+    progressState.fraction = typeof fraction === "number" ? fraction : null;
+    broadcastProgress();
+    setProgressBar(fraction);
+  }
+
+  function setProgressBar(fraction) {
     const bar = panel()?.querySelector(".msa-progress");
     if (!bar) return;
     const on = typeof fraction === "number";
@@ -907,6 +1085,9 @@
   }
 
   function setStatus(message, tone) {
+    progressState.text = message;
+    progressState.tone = tone || "";
+    broadcastProgress();
     const node = panel()?.querySelector(".msa-status");
     if (!node) return;
     node.textContent = message;
@@ -914,16 +1095,24 @@
   }
 
   function clearLog() {
+    progressState.log = [];
+    broadcastProgress();
     const list = panel()?.querySelector(".msa-log");
     if (list) list.textContent = "";
   }
 
-  function addLog(name, status, message) {
-    const list = panel()?.querySelector(".msa-log");
-    if (!list) return;
+  function logItem(name, status, message) {
     const item = el("li", { "data-status": status });
     item.append(el("span", { class: "msa-dot" }), el("span", { class: "msa-log-name" }, name), el("span", { class: "msa-log-msg" }, message || status));
-    list.append(item);
+    return item;
+  }
+
+  function addLog(name, status, message) {
+    progressState.log.push({ name, status, message: message || "" });
+    broadcastProgress();
+    const list = panel()?.querySelector(".msa-log");
+    if (!list) return;
+    list.append(logItem(name, status, message));
     list.scrollTop = list.scrollHeight;
   }
 
@@ -931,7 +1120,7 @@
     const root = panel();
     if (!root) return;
     root.classList.toggle("msa-busy", !!busy);
-    if (!busy) setProgress(null);
+    if (!busy) setProgressBar(null);
     root.querySelectorAll("[data-action]").forEach((b) => {
       if (b.dataset.action === "stop") b.disabled = !busy;
       else b.disabled = busy || b.dataset.empty === "1";
@@ -1207,12 +1396,21 @@
     const head = el("div", { class: "msa-head", title: "Свернуть / развернуть" });
     head.append(icon("logo", "msa-logo"));
     const titles = el("div", { class: "msa-titles" });
-    titles.append(el("div", { class: "msa-title" }, "Учебные умения"), el("div", { class: "msa-subtitle" }, `Во всех пунктах — «${TARGET_OPTION}»`));
+    titles.append(el("div", { class: "msa-title" }, "Учебные умения"), el("div", { class: "msa-subtitle" }, `Во всех пунктах — «${targetOption}»`));
     head.append(titles);
     const collapse = el("button", { class: "msa-icon-btn msa-collapse", type: "button", "aria-label": "Свернуть" });
     collapse.append(icon("minus"));
     head.append(collapse);
-    head.addEventListener("click", () => root.classList.toggle("msa-collapsed"));
+    head.addEventListener("click", () => {
+      // Клик после перетаскивания — не сворачивание.
+      if (root.dataset.dragged === "1") {
+        root.dataset.dragged = "";
+        return;
+      }
+      root.classList.toggle("msa-collapsed");
+      requestAnimationFrame(() => clampPanel(true));
+    });
+    makeDraggable(root, head);
 
     const body = el("div", { class: "msa-body" });
 
@@ -1272,10 +1470,25 @@
     });
     speedRow.append(seg);
 
-    body.append(speedRow, classesSection, journalSection, statusSection, resultsToggle, results);
+    // Какой ответ ставить во всех пунктах.
+    const answerRow = el("label", { class: "msa-speed msa-answer" });
+    answerRow.append(el("span", { class: "msa-speed-label" }, "Ответ"));
+    const select = el("select", { class: "msa-select", "data-answer": "" });
+    ANSWER_OPTIONS.forEach((opt) => {
+      const o = el("option", { value: opt }, opt);
+      if (opt === targetOption) o.selected = true;
+      select.append(o);
+    });
+    select.addEventListener("change", () => setAnswer(select.value));
+    answerRow.append(select);
+
+    body.append(answerRow, speedRow, classesSection, journalSection, statusSection, resultsToggle, results);
 
     root.append(head, body);
     document.body.append(root);
+    restorePanelPosition();
+    // Содержимое растёт (раскрыли классы/результаты) — не даём уйти за низ окна.
+    if (typeof ResizeObserver === "function") new ResizeObserver(() => clampPanel()).observe(root);
     setBusy(running);
     refreshStudentCount();
     log("панель показана, учеников найдено:", studentRows().length);
@@ -1291,6 +1504,104 @@
       root.hidden = false;
     }
   });
+
+  function setAnswer(value) {
+    if (!ANSWER_OPTIONS.includes(value)) return;
+    targetOption = value;
+    const root = panel();
+    if (root) {
+      const sub = root.querySelector(".msa-subtitle");
+      if (sub) sub.textContent = `Во всех пунктах — «${value}»`;
+      const select = root.querySelector("[data-answer]");
+      if (select && select.value !== value) select.value = value;
+    }
+    setStorage(ANSWER_KEY, value);
+  }
+
+  getStorage(ANSWER_KEY).then((saved) => {
+    if (ANSWER_OPTIONS.includes(saved)) setAnswer(saved);
+  });
+
+  // ---------- перетаскивание панели ----------
+  // Тянем за шапку (и в развёрнутом виде, и «таблеткой»). Позиция — left/top
+  // в px, хранится в meshSkillsPos; панель всегда держится в пределах окна.
+  const POS_KEY = "meshSkillsPos";
+  const DRAG_THRESHOLD = 4;
+  const EDGE = 8;
+
+  function placePanel(left, top) {
+    const root = panel();
+    if (!root) return;
+    root.style.left = `${Math.round(left)}px`;
+    root.style.top = `${Math.round(top)}px`;
+    root.style.bottom = "auto";
+    root.style.right = "auto";
+  }
+
+  // Не даём панели уехать за край — после перетаскивания, сворачивания/
+  // разворачивания и изменения размера окна или содержимого.
+  function clampPanel(save = false) {
+    const root = panel();
+    if (!root || root.hidden || !root.style.top) return;
+    const r = root.getBoundingClientRect();
+    const left = Math.min(Math.max(EDGE, r.left), Math.max(EDGE, window.innerWidth - r.width - EDGE));
+    const top = Math.min(Math.max(EDGE, r.top), Math.max(EDGE, window.innerHeight - r.height - EDGE));
+    if (Math.abs(left - r.left) > 0.5 || Math.abs(top - r.top) > 0.5) placePanel(left, top);
+    if (save) setStorage(POS_KEY, { left, top });
+  }
+
+  function makeDraggable(root, handle) {
+    let start = null;
+    handle.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      // Иначе браузер начинает своё перетаскивание/выделение и перестаёт
+      // присылать pointermove (так «таблетка» не двигалась за значок).
+      e.preventDefault();
+      // Захват сразу: при быстром рывке указатель успевает уйти с маленькой
+      // «таблетки» до порога перетаскивания, и без захвата движения теряются.
+      handle.setPointerCapture?.(e.pointerId);
+      const r = root.getBoundingClientRect();
+      start = { x: e.clientX, y: e.clientY, left: r.left, top: r.top, moved: false };
+    });
+    handle.addEventListener("pointermove", (e) => {
+      if (!start) return;
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      if (!start.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      if (!start.moved) {
+        start.moved = true;
+        root.classList.add("msa-dragging");
+      }
+      const r = root.getBoundingClientRect();
+      const left = Math.min(Math.max(EDGE, start.left + dx), window.innerWidth - r.width - EDGE);
+      const top = Math.min(Math.max(EDGE, start.top + dy), window.innerHeight - r.height - EDGE);
+      placePanel(left, top);
+    });
+    const end = (e) => {
+      if (!start) return;
+      if (handle.hasPointerCapture?.(e.pointerId)) handle.releasePointerCapture(e.pointerId);
+      if (start.moved) {
+        root.dataset.dragged = "1";
+        // Если click после перетаскивания не придёт — флаг не должен «съесть» следующий клик.
+        setTimeout(() => { root.dataset.dragged = ""; }, 0);
+        root.classList.remove("msa-dragging");
+        clampPanel(true);
+      }
+      start = null;
+    };
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  }
+
+  async function restorePanelPosition() {
+    const pos = await getStorage(POS_KEY);
+    if (pos && Number.isFinite(pos.left) && Number.isFinite(pos.top)) {
+      placePanel(pos.left, pos.top);
+      clampPanel();
+    }
+  }
+
+  window.addEventListener("resize", () => clampPanel());
 
   function setSpeed(key) {
     if (!SPEEDS[key]) return;
