@@ -246,3 +246,38 @@
   max-height: calc(100vh - 90px);
   overflow-y: auto;
 }
+
+#mesh-skills-panel .msa-picker-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+#mesh-skills-panel .msa-link {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--msa-accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+#mesh-skills-panel .msa-picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 4px;
+  border-top: 1px solid #e2ddf3;
+}
+
+#mesh-skills-panel .msa-picker-all,
+#mesh-skills-panel .msa-picker-parallel {
+  font-weight: 700;
+}
+
+#mesh-skills-panel .msa-picker-class {
+  padding-left: 18px;
+}

@@ -475,6 +475,9 @@
 
   const BATCH_KEY = "meshSkillsBatch";
   const RESULTS_KEY = "meshSkillsResults";
+  // Список классов учителя (кэш со страницы «Мои классы») и последний выбор галочек.
+  const CLASSES_KEY = "meshSkillsClasses";
+  const SELECTION_KEY = "meshSkillsSelection";
   const memoryStore = {};
 
   function getStorage(key) {
@@ -687,13 +690,28 @@
     location.href = journalUrl(selected[0].id);
   }
 
-  async function goToMyClassesAndPick() {
+  // Список классов берётся только со страницы «Мои классы» — туда переходим,
+  // собираем, кладём в кэш и сразу открываем выбор.
+  async function loadClassesFromMyPage() {
     if (isMyClassesPage()) {
-      await showClassPicker();
+      await refreshClassesCache();
+      await renderPicker(true);
       return;
     }
     await setStorage(BATCH_KEY, { status: "picking" });
     location.href = MY_CLASSES_PATH;
+  }
+
+  async function refreshClassesCache() {
+    const box = panel()?.querySelector(".msa-picker");
+    if (box) {
+      box.hidden = false;
+      box.textContent = "";
+      box.append(el("div", { class: "msa-picker-title" }, "Ищу классы…"));
+    }
+    const list = await prepareMyClasses();
+    if (list.length) await setStorage(CLASSES_KEY, { list, at: Date.now() });
+    return list;
   }
 
   async function finishBatch(batch, message) {
@@ -713,7 +731,8 @@
       await setStorage(BATCH_KEY, { status: "idle" });
       forcedVisible = true;
       ensurePanel();
-      await showClassPicker();
+      await refreshClassesCache();
+      await renderPicker(true);
       return;
     }
     if (batch.status !== "running") return;
@@ -844,40 +863,133 @@
     const root = panel();
     if (!root) return;
     root.querySelectorAll("[data-action]").forEach((b) => {
-      b.disabled = b.dataset.action === "stop" ? !busy : busy;
+      if (b.dataset.action === "stop") b.disabled = !busy;
+      else b.disabled = busy || b.dataset.empty === "1";
     });
   }
 
-  // Выбор классов: все отмечены, можно снять лишние.
-  async function showClassPicker() {
+  // ---------- выбор классов ----------
+  // Раскрывающийся блок под кнопкой «Все мои классы»: галочка «Все классы»,
+  // галочка на каждую параллель (вся параллель разом) и на каждый класс.
+
+  function parallelOf(cls) {
+    const m = String(cls.classLabel || "").match(/^(\d+)/);
+    return m ? m[1] : "?";
+  }
+
+  function togglePicker() {
     const box = panel()?.querySelector(".msa-picker");
     if (!box) return;
-    box.hidden = false;
-    box.textContent = "";
-    box.append(el("div", { class: "msa-picker-title" }, "Ищу классы…"));
-    const classes = await prepareMyClasses();
-    box.textContent = "";
-    if (!classes.length) {
-      box.append(el("div", { class: "msa-picker-title", "data-tone": "error" }, "Карточки классов не найдены. Разверните параллели и нажмите «Все мои классы» ещё раз."));
+    if (!box.hidden) {
+      box.hidden = true;
+      syncClassesButton();
       return;
     }
-    box.append(el("div", { class: "msa-picker-title" }, `Классов: ${classes.length}. Снимите лишние галочки:`));
+    renderPicker(true);
+  }
+
+  function syncClassesButton() {
+    const btn = panel()?.querySelector('[data-action="classes"]');
+    const box = panel()?.querySelector(".msa-picker");
+    if (btn) btn.textContent = `Все мои классы ${box && !box.hidden ? "▾" : "▸"}`;
+  }
+
+  async function renderPicker(open) {
+    const box = panel()?.querySelector(".msa-picker");
+    if (!box) return;
+    if (open) box.hidden = false;
+    syncClassesButton();
+    box.textContent = "";
+
+    const cache = await getStorage(CLASSES_KEY);
+    const classes = Array.isArray(cache?.list) ? cache.list : [];
+    if (!classes.length) {
+      box.append(el("div", { class: "msa-picker-title" }, "Список классов ещё не загружен — он берётся со страницы «Мои классы»."));
+      const load = el("button", { class: "msa-btn", "data-action": "load" }, "Загрузить список классов");
+      load.addEventListener("click", loadClassesFromMyPage);
+      box.append(load);
+      setBusy(running);
+      return;
+    }
+
+    const savedSel = await getStorage(SELECTION_KEY);
+    const selected = new Set(Array.isArray(savedSel) ? savedSel.map(String) : classes.map((c) => String(c.id)));
+
+    const head = el("div", { class: "msa-picker-head" });
+    head.append(el("span", { class: "msa-picker-title" }, `Классов: ${classes.length} · список от ${new Date(cache.at).toLocaleDateString("ru-RU")}`));
+    const reload = el("button", { class: "msa-link", "data-action": "load", title: "Перейти в «Мои классы» и собрать список заново" }, "обновить");
+    reload.addEventListener("click", loadClassesFromMyPage);
+    head.append(reload);
+    box.append(head);
+
     const list = el("div", { class: "msa-picker-list" });
-    classes.forEach((cls, i) => {
-      const label = el("label", { class: "msa-picker-item" });
-      const cb = el("input", { type: "checkbox", "data-index": String(i) });
-      cb.checked = true;
-      label.append(cb, document.createTextNode(` ${cls.classLabel} — ${cls.text}`));
-      list.append(label);
+    const allLabel = el("label", { class: "msa-picker-item msa-picker-all" });
+    const allCb = el("input", { type: "checkbox" });
+    allLabel.append(allCb, document.createTextNode(" Все классы"));
+    list.append(allLabel);
+
+    const groups = new Map();
+    classes.forEach((cls) => {
+      const key = parallelOf(cls);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(cls);
+    });
+    const parallelBoxes = [];
+    const classBoxes = [];
+    [...groups.keys()].sort((a, b) => Number(a) - Number(b)).forEach((key) => {
+      const group = el("div", { class: "msa-picker-group" });
+      const pLabel = el("label", { class: "msa-picker-item msa-picker-parallel" });
+      const pCb = el("input", { type: "checkbox", "data-parallel": key });
+      pLabel.append(pCb, document.createTextNode(key === "?" ? " Без параллели" : ` ${key} параллель`));
+      group.append(pLabel);
+      parallelBoxes.push(pCb);
+      groups.get(key).forEach((cls) => {
+        const label = el("label", { class: "msa-picker-item msa-picker-class" });
+        const cb = el("input", { type: "checkbox", "data-id": String(cls.id), "data-parallel": key });
+        cb.checked = selected.has(String(cls.id));
+        label.append(cb, document.createTextNode(` ${cls.classLabel} — ${cls.text}`));
+        group.append(label);
+        classBoxes.push(cb);
+      });
+      list.append(group);
     });
     box.append(list);
-    const start = el("button", { class: "msa-btn msa-btn-all" }, "Начать по выбранным классам");
-    start.addEventListener("click", () => {
-      const chosen = [...list.querySelectorAll("input[type=checkbox]")].filter((c) => c.checked).map((c) => classes[Number(c.dataset.index)]);
-      box.hidden = true;
-      startAllClasses(chosen);
-    });
+
+    const start = el("button", { class: "msa-btn msa-btn-classes", "data-action": "start" });
     box.append(start);
+
+    const chosen = () => classBoxes.filter((cb) => cb.checked).map((cb) => classes.find((c) => String(c.id) === cb.dataset.id));
+    const setGroupState = (cb, members) => {
+      const on = members.filter((m) => m.checked).length;
+      cb.checked = on > 0 && on === members.length;
+      cb.indeterminate = on > 0 && on < members.length;
+    };
+    const sync = () => {
+      parallelBoxes.forEach((pCb) => setGroupState(pCb, classBoxes.filter((cb) => cb.dataset.parallel === pCb.dataset.parallel)));
+      setGroupState(allCb, classBoxes);
+      const n = chosen().length;
+      start.textContent = n ? `Начать — выбрано классов: ${n}` : "Выберите классы";
+      start.dataset.empty = n ? "" : "1";
+      start.disabled = running || !n;
+      setStorage(SELECTION_KEY, classBoxes.filter((cb) => cb.checked).map((cb) => cb.dataset.id));
+    };
+    allCb.addEventListener("change", () => {
+      classBoxes.forEach((cb) => { cb.checked = allCb.checked; });
+      sync();
+    });
+    parallelBoxes.forEach((pCb) => pCb.addEventListener("change", () => {
+      classBoxes.filter((cb) => cb.dataset.parallel === pCb.dataset.parallel).forEach((cb) => { cb.checked = pCb.checked; });
+      sync();
+    }));
+    classBoxes.forEach((cb) => cb.addEventListener("change", sync));
+    start.addEventListener("click", () => {
+      const list = chosen();
+      if (!list.length) return;
+      box.hidden = true;
+      syncClassesButton();
+      startAllClasses(list);
+    });
+    sync();
   }
 
   function showResultsSection(open) {
@@ -997,20 +1109,21 @@
     const body = el("div", { class: "msa-body" });
     body.append(el("p", { class: "msa-hint" }, `Во всех пунктах ставится «${TARGET_OPTION}».`));
     const buttons = [
-      ["classes", "Все мои классы — по очереди", () => goToMyClassesAndPick()],
+      ["classes", "Все мои классы ▸", () => togglePicker()],
       ["all", "Этот журнал — заполнить и сохранить", () => runAll({ save: true })],
       ["one", "Проверка на 1 ученике (без сохранения)", () => runAll({ limit: 1, save: false })],
       ["form", "Заполнить открытую форму", () => fillOpenForm()],
       ["stop", "Стоп", () => stopEverything()]
     ];
+    const picker = el("div", { class: "msa-picker" });
+    picker.hidden = true;
     buttons.forEach(([action, label, handler]) => {
       const b = el("button", { "data-action": action, class: `msa-btn msa-btn-${action}` }, label);
       b.addEventListener("click", handler);
       body.append(b);
+      // Блок выбора классов раскрывается прямо под своей кнопкой.
+      if (action === "classes") body.append(picker);
     });
-    const picker = el("div", { class: "msa-picker" });
-    picker.hidden = true;
-    body.append(picker);
     body.append(el("div", { class: "msa-count" }));
     body.append(el("div", { class: "msa-status" }, "Нажмите кнопку, чтобы начать."));
     body.append(el("ol", { class: "msa-log" }));

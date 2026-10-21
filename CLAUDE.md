@@ -44,8 +44,14 @@ Chrome MV3 расширение для `school.mos.ru`: в журнале учи
 - «Уже было заполнено» — только если форма ОТКРЫЛАСЬ уже заполненной. Если
   «Сохранить» неактивна после наших кликов — форма закрывается и открывается
   заново для перепроверки; не подтвердилось — останов с ошибкой.
-- **Все мои классы** (`goToMyClassesAndPick` → `showClassPicker` →
-  `startAllClasses` → `resumeBatchIfRunning`): список классов — карточки
+- **Все мои классы** — раскрывающийся блок под кнопкой (`togglePicker` →
+  `renderPicker`): галочка «Все классы», галочка на параллель (по ведущим
+  цифрам `classLabel`, состояние «частично» через `indeterminate`) и на каждый
+  класс. Список классов кэшируется в `meshSkillsClasses` `{list, at}`, выбор —
+  в `meshSkillsSelection` (массив id), поэтому выбирать можно с любой страницы
+  журнала; «Загрузить список»/«обновить» → переход на «Мои классы»
+  (`loadClassesFromMyPage`, батч `status: "picking"`) и обратно в выбор.
+  Запуск — `startAllClasses` → `resumeBatchIfRunning`. Список классов — карточки
   `[data-test-component="journalCardRoute"]` со ссылкой `/journal/my/<id>` на
   странице `/teacher/study-process/journal/my` (свёрнутые параллели
   раскрываются кликом по `h6` секции `journalListSection-*`) — проверенный
