@@ -96,6 +96,14 @@
   background: var(--msa-muted);
 }
 
+#mesh-skills-panel .msa-count {
+  color: #555;
+}
+
+#mesh-skills-panel .msa-count[data-tone="error"] {
+  color: var(--msa-error);
+}
+
 #mesh-skills-panel .msa-status[data-tone="ok"] {
   color: var(--msa-ok);
 }

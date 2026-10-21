@@ -405,15 +405,31 @@
     });
   }
 
+  let forcedVisible = false;
+
+  function isJournalPage() {
+    return /journal/i.test(location.pathname);
+  }
+
+  function refreshStudentCount() {
+    const root = panel();
+    const counter = root?.querySelector(".msa-count");
+    if (!counter) return;
+    const n = studentRows().length;
+    counter.textContent = n ? `Учеников в журнале: ${n}` : "Ученики не найдены — откройте журнал предмета.";
+    counter.dataset.tone = n ? "" : "error";
+  }
+
   function ensurePanel() {
-    const hasStudents = studentRows().length > 0;
+    const shouldShow = forcedVisible || running || isJournalPage() || studentRows().length > 0;
     let root = panel();
-    if (!hasStudents) {
-      if (root && !running) root.hidden = true;
+    if (!shouldShow) {
+      if (root) root.hidden = true;
       return;
     }
     if (root) {
       root.hidden = false;
+      refreshStudentCount();
       return;
     }
 
@@ -437,13 +453,27 @@
       b.addEventListener("click", handler);
       body.append(b);
     });
-    body.append(el("div", { class: "msa-status" }, `Учеников в журнале: ${studentRows().length}`));
+    body.append(el("div", { class: "msa-count" }));
+    body.append(el("div", { class: "msa-status" }, "Нажмите кнопку, чтобы начать."));
     body.append(el("ol", { class: "msa-log" }));
 
     root.append(head, body);
     document.body.append(root);
     setBusy(false);
+    refreshStudentCount();
+    log("панель показана, учеников найдено:", studentRows().length);
   }
+
+  globalThis.chrome?.runtime?.onMessage?.addListener((message) => {
+    if (message?.source !== "mesh-skills" || message.type !== "show-panel") return;
+    forcedVisible = true;
+    ensurePanel();
+    const root = panel();
+    if (root) {
+      root.classList.remove("msa-collapsed");
+      root.hidden = false;
+    }
+  });
 
   window.__MESH_SKILLS_AUTOFILL__ = { runAll, fillOpenForm, studentRows, findPopup, findForm, stop: () => { stopRequested = true; } };
 
