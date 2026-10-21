@@ -457,36 +457,84 @@
 
   // ---------- один ученик ----------
 
-  async function processStudent(student, { save, recheck = false }) {
-    if (findForm()) return { status: "error", message: "уже открыта другая форма — закройте её" };
-    await closePopup();
+  // Снимок страницы в момент сбоя — чтобы по сообщению в результатах понять,
+  // что на самом деле произошло (форма скрыта? убрана? открыт ли попап?).
+  function describePage() {
+    const titles = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (norm(node.nodeValue) === TXT_FORM_TITLE && !isOwn(node)) titles.push(node.parentElement);
+    }
+    const titleInfo = titles.length
+      ? titles.map((t) => {
+          const cs = getComputedStyle(t);
+          const r = t.getBoundingClientRect();
+          return `${isVisible(t) ? "видим" : "без размеров"}${cs.visibility === "hidden" ? ", visibility:hidden" : ""}${Number(cs.opacity) === 0 ? ", прозрачный" : ""}${r.right < 0 || r.left > window.innerWidth ? ", за экраном" : ""}`;
+        }).join("; ")
+      : "нет в DOM";
+    return [
+      `заголовок формы: ${titleInfo}`,
+      `«Сохранить»: ${buttonsWithText(TXT_SAVE).length}`,
+      `попап: ${findPopup() ? "открыт" : "нет"}`,
+      `вкладка: ${document.hidden ? "фоновая" : "видимая"}`
+    ].join(", ");
+  }
 
-    const popup = await openPopupFor(student);
-    if (!popup) return { status: "error", message: "не открылся попап «Информация об учащемся»" };
-    await sleep(pace(STEP_DELAY_MS, 60));
+  const OPEN_ATTEMPTS = 3;
 
-    const openBtn = buttonsWithText(TXT_OPEN_FORM, popup)[0];
-    if (!openBtn) {
-      // Уже оценён — в попапе «Повторно оценить…». Не трогаем, сразу к следующему.
-      if (buttonsWithText(TXT_REOPEN_FORM, popup)[0]) {
-        await closePopup();
-        return { status: "already", message: "уже оценён (есть «Повторно оценить»)" };
+  // Попап → кнопка «Оценить…» → форма. Если форма открылась и тут же пропала —
+  // закрываем всё и пробуем ещё раз (до OPEN_ATTEMPTS).
+  async function openFormFor(student, recheck) {
+    let lastDiag = "";
+    for (let attempt = 1; attempt <= OPEN_ATTEMPTS; attempt += 1) {
+      if (stopRequested) return { result: { status: "stopped" } };
+      if (attempt > 1) {
+        await cleanupAfterError();
+        await sleep(pace(900, 400));
+        setStatus(`${student.name}: форма пропала, открываю ещё раз (попытка ${attempt} из ${OPEN_ATTEMPTS})…`);
       }
       await closePopup();
-      return { status: "error", message: "нет кнопки «Оценить учебные умения»" };
+      const popup = await openPopupFor(student);
+      if (!popup) return { result: { status: "error", message: "не открылся попап «Информация об учащемся»" } };
+      await sleep(pace(STEP_DELAY_MS, 60));
+
+      const openBtn = buttonsWithText(TXT_OPEN_FORM, popup)[0];
+      if (!openBtn) {
+        // Уже оценён — в попапе «Повторно оценить…». Не трогаем, сразу к следующему.
+        if (buttonsWithText(TXT_REOPEN_FORM, popup)[0]) {
+          await closePopup();
+          return { result: { status: "already", message: "уже оценён (есть «Повторно оценить»)" } };
+        }
+        await closePopup();
+        return { result: { status: "error", message: "нет кнопки «Оценить учебные умения»" } };
+      }
+      await humanClick(openBtn);
+
+      const opened = await waitFor(() => {
+        const f = findForm();
+        return f && textEls(targetOption, f).length ? f : null;
+      }, FORM_TIMEOUT_MS);
+      if (!opened) {
+        lastDiag = describePage();
+        log(student.name, `форма не открылась (попытка ${attempt})`, lastDiag);
+        continue;
+      }
+      // При перепроверке ждём дольше — нужно точно увидеть сохранённые ответы.
+      await (recheck ? waitStable(1500, 10000) : waitStable(600, 8000));
+      const form = findForm();
+      if (form) return { form, attempt };
+      lastDiag = describePage();
+      log(student.name, `форма закрылась сама (попытка ${attempt})`, lastDiag);
     }
-    await humanClick(openBtn);
+    return { result: { status: "error", message: `форма открывается и сразу закрывается (${OPEN_ATTEMPTS} попытки) — ${lastDiag}` } };
+  }
 
-    const opened = await waitFor(() => {
-      const f = findForm();
-      return f && textEls(targetOption, f).length ? f : null;
-    }, FORM_TIMEOUT_MS);
-    if (!opened) return { status: "error", message: "не открылась форма «Оценка учебных умений»" };
-    // При перепроверке ждём дольше — нужно точно увидеть сохранённые ответы.
-    await (recheck ? waitStable(1500, 10000) : waitStable(600, 8000));
+  async function processStudent(student, { save, recheck = false }) {
+    if (findForm()) return { status: "error", message: "уже открыта другая форма — закройте её" };
 
-    const form = findForm();
-    if (!form) return { status: "error", message: "форма закрылась сама", fatal: true };
+    const openedForm = await openFormFor(student, recheck);
+    if (openedForm.result) return openedForm.result;
+    const form = openedForm.form;
     // Сверка: в шапке формы должна быть фамилия того, по кому кликнули.
     const surname = student.name.split(" ")[0];
     if (surname && !norm(form.textContent).includes(surname)) {
@@ -514,7 +562,8 @@
     if (result === "saved" || result === "already") {
       await sleep(pace(STEP_DELAY_MS, 60));
       await closePopup();
-      return { status: result, message: result === "saved" ? `сохранено (${stats.questions} пунктов)` : "уже было заполнено" };
+      const retryNote = openedForm.attempt > 1 ? `, форма открылась с ${openedForm.attempt}-й попытки` : "";
+      return { status: result, message: result === "saved" ? `сохранено (${stats.questions} пунктов${retryNote})` : "уже было заполнено" };
     }
     return {
       status: "error",
@@ -742,7 +791,7 @@
       setStatus("Не выбрано ни одного класса.", "error");
       return;
     }
-    const canBackground = !!globalThis.chrome?.runtime?.id;
+    const canBackground = !!globalThis.chrome?.runtime?.id && useBackgroundTab;
     await setStorage(PROGRESS_KEY, { text: "Открываю фоновую вкладку…", tone: "", fraction: null, log: [], at: Date.now() });
     await setStorage(BATCH_KEY, { status: "running", mode: canBackground ? "background" : "same-tab", queue: selected, index: 0, startedAt: Date.now(), visits: 0 });
     if (!canBackground) {
@@ -763,6 +812,14 @@
   // ---------- рабочая вкладка и наблюдатели ----------
 
   const PROGRESS_KEY = "meshSkillsProgress";
+  // Где идёт обход классов: в фоновой вкладке (по умолчанию) или в этой.
+  const BG_KEY = "meshSkillsBackground";
+  let useBackgroundTab = true;
+  getStorage(BG_KEY).then((v) => {
+    if (typeof v === "boolean") useBackgroundTab = v;
+    const cb = panel()?.querySelector("[data-bg-toggle]");
+    if (cb) cb.checked = useBackgroundTab;
+  });
   let isWorker = false;
   const progressState = { text: "", tone: "", fraction: null, log: [] };
   let progressTimer = null;
@@ -1423,7 +1480,15 @@
     classesBtn.append(icon("chevron", "msa-chevron"));
     const picker = el("div", { class: "msa-picker" });
     picker.hidden = true;
-    classesSection.append(classesBtn, picker);
+    const bgLabel = el("label", { class: "msa-check", title: "Выключите, если в фоне что-то идёт не так — тогда классы будут проходиться прямо в этой вкладке" });
+    const bgCb = el("input", { type: "checkbox", "data-bg-toggle": "" });
+    bgCb.checked = useBackgroundTab;
+    bgCb.addEventListener("change", () => {
+      useBackgroundTab = bgCb.checked;
+      setStorage(BG_KEY, useBackgroundTab);
+    });
+    bgLabel.append(bgCb, el("span", {}, "В фоновой вкладке"));
+    classesSection.append(classesBtn, bgLabel, picker);
 
     // Раздел 2 — текущий журнал.
     const journalSection = el("section", { class: "msa-section" });

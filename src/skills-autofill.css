@@ -470,6 +470,24 @@
   height: 13px;
 }
 
+#mesh-skills-panel .msa-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+  color: var(--msa-muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#mesh-skills-panel .msa-check input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--msa-accent);
+  cursor: pointer;
+}
+
 /* ---------- выбор классов ---------- */
 
 #mesh-skills-panel .msa-picker,
