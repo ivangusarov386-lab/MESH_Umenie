@@ -1,0 +1,125 @@
+#mesh-skills-panel {
+  --msa-accent: #6d28d9;
+  --msa-surface: #ffffff;
+  --msa-muted: #f4f2fb;
+  --msa-text: #1f1f2e;
+  --msa-ok: #15803d;
+  --msa-error: #b91c1c;
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483000;
+  width: 300px;
+  background: var(--msa-surface);
+  color: var(--msa-text);
+  border: 1px solid #d9d4f0;
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(30, 20, 70, 0.18);
+  font: 500 13px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+#mesh-skills-panel[hidden] {
+  display: none;
+}
+
+#mesh-skills-panel .msa-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--msa-accent);
+  color: #fff;
+  border-radius: 11px 11px 0 0;
+  font-weight: 700;
+}
+
+#mesh-skills-panel.msa-collapsed .msa-head {
+  border-radius: 11px;
+}
+
+#mesh-skills-panel .msa-collapse {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#mesh-skills-panel.msa-collapsed .msa-body {
+  display: none;
+}
+
+#mesh-skills-panel .msa-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px;
+}
+
+#mesh-skills-panel .msa-hint {
+  margin: 0 0 2px;
+  color: #555;
+}
+
+#mesh-skills-panel .msa-btn {
+  padding: 7px 10px;
+  border: 1px solid var(--msa-accent);
+  border-radius: 8px;
+  background: var(--msa-surface);
+  color: var(--msa-accent);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+#mesh-skills-panel .msa-btn-all {
+  background: var(--msa-accent);
+  color: #fff;
+  font-weight: 700;
+}
+
+#mesh-skills-panel .msa-btn-stop {
+  border-color: var(--msa-error);
+  color: var(--msa-error);
+}
+
+#mesh-skills-panel .msa-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+#mesh-skills-panel .msa-status {
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--msa-muted);
+}
+
+#mesh-skills-panel .msa-status[data-tone="ok"] {
+  color: var(--msa-ok);
+}
+
+#mesh-skills-panel .msa-status[data-tone="error"] {
+  color: var(--msa-error);
+}
+
+#mesh-skills-panel .msa-log {
+  max-height: 180px;
+  margin: 0;
+  padding-left: 22px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+#mesh-skills-panel .msa-log:empty {
+  display: none;
+}
+
+#mesh-skills-panel .msa-log li[data-status="error"] {
+  color: var(--msa-error);
+}
+
+#mesh-skills-panel .msa-log li[data-status="saved"] {
+  color: var(--msa-ok);
+}

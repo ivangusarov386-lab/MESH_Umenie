@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "МЭШ — Оценка учебных умений",
+  "description": "Автоматически отмечает «Почти всегда» во всех пунктах формы «Оценка учебных умений» по всем ученикам журнала school.mos.ru.",
+  "version": "0.1.0",
+  "host_permissions": [
+    "https://school.mos.ru/*"
+  ],
+  "permissions": [
+    "storage"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://school.mos.ru/*"
+      ],
+      "js": [
+        "src/skills-autofill.js"
+      ],
+      "css": [
+        "src/skills-autofill.css"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
