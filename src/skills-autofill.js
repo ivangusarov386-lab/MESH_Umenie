@@ -37,6 +37,9 @@
   const TXT_FORM_TITLE = "Оценка учебных умений";
   const TXT_SAVE = "Сохранить";
   const TXT_CANCEL = "Отмена";
+  // Диалог МЭШ после «Отмены», если в форме уже есть отметки (скриншот пользователя).
+  const TXT_DISCARD_TITLE = "Выход без сохранения";
+  const TXT_DISCARD_CONFIRM = "Выйти без сохранения";
 
   const STEP_DELAY_MS = 350;
   const POPUP_TIMEOUT_MS = 5000;
@@ -286,7 +289,52 @@
   }
 
   function findForm() {
-    return containerWith(TXT_FORM_TITLE, TXT_SAVE);
+    // Обычно — контейнер с заголовком и кнопкой «Сохранить». Запасной путь —
+    // контейнер с заголовком и вариантами ответа (если кнопка на миг сменила
+    // текст или перерисовывается).
+    return containerWith(TXT_FORM_TITLE, TXT_SAVE) || containerWithText(TXT_FORM_TITLE, ANY_OPTION);
+  }
+
+  function containerWithText(titleText, innerText) {
+    for (const title of textEls(titleText)) {
+      let el = title.parentElement;
+      while (el && el !== document.body) {
+        if (textEls(innerText, el).length) return el;
+        el = el.parentElement;
+      }
+    }
+    return null;
+  }
+
+  // Форма МЭШ на долю секунды пропадает из DOM, когда перерисовывается
+  // (догрузка ученика). Одна неудачная проверка — ещё не «форма закрылась»:
+  // ждём, не появится ли снова.
+  const FORM_GRACE_MS = 4000;
+
+  function waitForForm(ms = FORM_GRACE_MS) {
+    return waitFor(() => {
+      const f = findForm();
+      return f && textEls(ANY_OPTION, f).length ? f : null;
+    }, ms);
+  }
+
+  // «Отмена» при отметках в форме вызывает диалог «Выход без сохранения» —
+  // мы бросаем форму намеренно, поэтому подтверждаем выход.
+  async function confirmDiscardIfAsked(timeoutMs = 2000) {
+    const btn = await waitFor(() => (textEls(TXT_DISCARD_TITLE).length ? buttonsWithText(TXT_DISCARD_CONFIRM)[0] : null), timeoutMs);
+    if (btn) {
+      await humanClick(btn);
+      await waitFor(() => !textEls(TXT_DISCARD_TITLE).length, 3000);
+    }
+    return !!btn;
+  }
+
+  async function cancelForm(form) {
+    const cancel = form && buttonsWithText(TXT_CANCEL, form)[0];
+    if (!cancel) return;
+    await humanClick(cancel);
+    await confirmDiscardIfAsked();
+    await waitFor(() => !findForm(), 4000);
   }
 
   async function openPopupFor(student) {
@@ -407,11 +455,11 @@
   async function fillUntilStable() {
     let stats = { questions: 0, checked: 0 };
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const form = findForm();
+      const form = findForm() || (await waitForForm());
       if (!form || stopRequested) return stats;
       await fillForm(form);
       await waitStable(500, 6000);
-      const fresh = findForm();
+      const fresh = findForm() || (await waitForForm());
       stats = fresh ? formStats(fresh) : stats;
       if (isComplete(stats)) return stats;
       log("после заполнения отметки слетели, повторяю", stats);
@@ -435,15 +483,13 @@
         const closed = await waitFor(() => !findForm(), SAVE_CLOSE_TIMEOUT_MS);
         return closed ? "saved" : "not-closed";
       }
-      const form = findForm();
+      const form = findForm() || (await waitForForm());
       if (!form) return "not-closed";
       const stats = formStats(form);
       // «Уже было» — только если форма открылась УЖЕ заполненной (до наших кликов)
       // и сейчас всё отмечено, а «Сохранить» неактивна из-за отсутствия изменений.
       if (isComplete(stats)) {
-        const cancel = buttonsWithText(TXT_CANCEL, form)[0];
-        if (cancel) await humanClick(cancel);
-        await waitFor(() => !findForm(), 4000);
+        await cancelForm(form);
         // Если форма открылась уже заполненной — это правда «уже было». Иначе
         // (ответы догрузились после наших кликов) не верим и перепроверяем
         // повторным открытием формы.
@@ -476,6 +522,7 @@
       `заголовок формы: ${titleInfo}`,
       `«Сохранить»: ${buttonsWithText(TXT_SAVE).length}`,
       `попап: ${findPopup() ? "открыт" : "нет"}`,
+      `диалог «Выход без сохранения»: ${textEls(TXT_DISCARD_TITLE).length ? "да" : "нет"}`,
       `вкладка: ${document.hidden ? "фоновая" : "видимая"}`
     ].join(", ");
   }
@@ -489,6 +536,9 @@
     for (let attempt = 1; attempt <= OPEN_ATTEMPTS; attempt += 1) {
       if (stopRequested) return { result: { status: "stopped" } };
       if (attempt > 1) {
+        // Форма «вернулась», пока мы собирались переоткрывать, — берём её.
+        const back = await waitForForm(1500);
+        if (back) return { form: back, attempt: attempt - 1 };
         await cleanupAfterError();
         await sleep(pace(900, 400));
         setStatus(`${student.name}: форма пропала, открываю ещё раз (попытка ${attempt} из ${OPEN_ATTEMPTS})…`);
@@ -521,7 +571,7 @@
       }
       // При перепроверке ждём дольше — нужно точно увидеть сохранённые ответы.
       await (recheck ? waitStable(1500, 10000) : waitStable(600, 8000));
-      const form = findForm();
+      const form = findForm() || (await waitForForm());
       if (form) return { form, attempt };
       lastDiag = describePage();
       log(student.name, `форма закрылась сама (попытка ${attempt})`, lastDiag);
@@ -534,9 +584,13 @@
 
     const openedForm = await openFormFor(student, recheck);
     if (openedForm.result) return openedForm.result;
-    const form = openedForm.form;
-    // Сверка: в шапке формы должна быть фамилия того, по кому кликнули.
+    // Сверка: в шапке формы должна быть фамилия того, по кому кликнули
+    // (ждём немного — форма может сначала показать прежнего ученика).
     const surname = student.name.split(" ")[0];
+    const form = (await waitFor(() => {
+      const f = findForm();
+      return f && (!surname || norm(f.textContent).includes(surname)) ? f : null;
+    }, FORM_GRACE_MS)) || findForm() || openedForm.form;
     if (surname && !norm(form.textContent).includes(surname)) {
       return { status: "error", message: `в форме другой ученик (ожидался ${student.name})`, fatal: true };
     }
@@ -690,12 +744,10 @@
   // ---------- уборка после ошибки ----------
 
   async function cleanupAfterError() {
+    // Диалог мог остаться от прошлой попытки.
+    await confirmDiscardIfAsked(300);
     const form = findForm();
-    if (form) {
-      const cancel = buttonsWithText(TXT_CANCEL, form)[0];
-      if (cancel) await humanClick(cancel);
-      await waitFor(() => !findForm(), 4000);
-    }
+    if (form) await cancelForm(form);
     await closePopup();
     return !findForm() && !findPopup();
   }
