@@ -202,6 +202,58 @@
   font-size: 12px;
 }
 
+/* ---------- скорость ---------- */
+
+#mesh-skills-panel .msa-speed {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+#mesh-skills-panel .msa-speed-label {
+  color: var(--msa-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+#mesh-skills-panel .msa-seg {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--msa-neutral-soft);
+  border-radius: 9px;
+}
+
+#mesh-skills-panel .msa-seg button {
+  padding: 4px 10px;
+  color: var(--msa-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+
+#mesh-skills-panel .msa-seg button:hover {
+  color: var(--msa-text);
+}
+
+#mesh-skills-panel .msa-seg button[aria-checked="true"] {
+  color: var(--msa-accent);
+  background: var(--msa-surface);
+  box-shadow: 0 1px 2px rgba(20, 14, 60, 0.12);
+}
+
+#mesh-skills-panel .msa-seg button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--msa-accent-ring);
+}
+
 /* ---------- кнопки ---------- */
 
 #mesh-skills-panel .msa-btn {

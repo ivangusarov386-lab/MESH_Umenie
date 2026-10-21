@@ -64,6 +64,22 @@
     return Math.round(min + Math.random() * (max - min));
   }
 
+  // ---------- скорость ----------
+  // Все «человеческие» паузы (движение указателя, между пунктами, между
+  // учениками) умножаются на множитель режима. Ожидания загрузки страницы
+  // (waitFor/waitStable) от режима не зависят — они про надёжность.
+  const SPEED_KEY = "meshSkillsSpeed";
+  const SPEEDS = {
+    normal: { factor: 1, label: "Спокойно" },
+    fast: { factor: 0.45, label: "Быстро" },
+    turbo: { factor: 0.22, label: "Турбо" }
+  };
+  let speed = "fast";
+
+  function pace(ms, min = 0) {
+    return Math.max(min, Math.round(ms * (SPEEDS[speed] || SPEEDS.fast).factor));
+  }
+
   // Наши собственные элементы (панель, курсор) — не часть страницы МЭШ.
   function isOwn(node) {
     const el = node?.nodeType === 1 ? node : node?.parentElement;
@@ -152,7 +168,7 @@
     const el = cursorEl();
     el.hidden = false;
     const dist = Math.hypot(x - cursorPos.x, y - cursorPos.y);
-    const ms = Math.min(420, Math.max(110, dist * 0.45)) + rand(0, 60);
+    const ms = pace(Math.min(420, Math.max(110, dist * 0.45)) + rand(0, 60), 40);
     el.style.transitionDuration = `${ms}ms`;
     el.style.transform = `translate(${x}px, ${y}px)`;
     cursorPos = { x, y };
@@ -163,7 +179,7 @@
     if (!el || !el.isConnected) return;
     if (!inView(el)) {
       el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
-      await sleep(rand(320, 480));
+      await sleep(pace(rand(320, 480), 160));
     }
     const r = el.getBoundingClientRect();
     // Случайная точка в центральной части элемента.
@@ -174,10 +190,10 @@
     fire(el, "mouseover", x, y);
     fire(el, "pointermove", x, y);
     fire(el, "mousemove", x, y);
-    await sleep(rand(40, 110));
+    await sleep(pace(rand(40, 110), 15));
     fire(el, "pointerdown", x, y);
     fire(el, "mousedown", x, y);
-    await sleep(rand(45, 95));
+    await sleep(pace(rand(45, 95), 20));
     fire(el, "pointerup", x, y);
     fire(el, "mouseup", x, y);
     el.click();
@@ -274,7 +290,7 @@
       await humanClick(opt.target);
       clicks += 1;
       // Обычный темп — 0,2–0,5 с между пунктами, изредка «вчитывается» подольше.
-      await sleep(Math.random() < 0.12 ? rand(450, 900) : rand(200, 480));
+      await sleep(pace(Math.random() < 0.12 ? rand(450, 900) : rand(200, 480), 40));
     }
     return clicks;
   }
@@ -304,12 +320,12 @@
     const scroller = scrollableIn(form);
     if (scroller && scroller.scrollTop > 0) {
       scroller.scrollTo({ top: 0, behavior: "smooth" });
-      await sleep(350);
+      await sleep(pace(350, 150));
     }
     for (let guard = 0; guard < 60; guard += 1) {
       if (stopRequested) return formStats(form);
       await fillVisible(form);
-      await sleep(rand(100, 180));
+      await sleep(pace(rand(100, 180), 40));
       if (!scroller) break;
       const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4;
       if (atBottom) {
@@ -317,7 +333,7 @@
         continue;
       }
       scroller.scrollBy({ top: Math.max(200, scroller.clientHeight * 0.8), behavior: "smooth" });
-      await sleep(rand(300, 420));
+      await sleep(pace(rand(300, 420), 180));
     }
     return formStats(form);
   }
@@ -356,7 +372,7 @@
       const form = findForm();
       if (!form || stopRequested) return stats;
       await fillForm(form);
-      await waitStable();
+      await waitStable(500, 6000);
       const fresh = findForm();
       stats = fresh ? formStats(fresh) : stats;
       if (isComplete(stats)) return stats;
@@ -376,7 +392,7 @@
       if (stopRequested) return "stopped";
       const enabled = await waitFor(currentSaveButton, SAVE_ENABLE_TIMEOUT_MS);
       if (enabled) {
-        await sleep(rand(350, 800));
+        await sleep(pace(rand(350, 800), 80));
         await humanClick(enabled);
         const closed = await waitFor(() => !findForm(), SAVE_CLOSE_TIMEOUT_MS);
         return closed ? "saved" : "not-closed";
@@ -409,7 +425,7 @@
 
     const popup = await openPopupFor(student);
     if (!popup) return { status: "error", message: "не открылся попап «Информация об учащемся»" };
-    await sleep(STEP_DELAY_MS);
+    await sleep(pace(STEP_DELAY_MS, 60));
 
     const openBtn = buttonsWithText(TXT_OPEN_FORM, popup)[0];
     if (!openBtn) {
@@ -429,7 +445,7 @@
     }, FORM_TIMEOUT_MS);
     if (!opened) return { status: "error", message: "не открылась форма «Оценка учебных умений»" };
     // При перепроверке ждём дольше — нужно точно увидеть сохранённые ответы.
-    await (recheck ? waitStable(1500, 10000) : waitStable(1000, 8000));
+    await (recheck ? waitStable(1500, 10000) : waitStable(600, 8000));
 
     const form = findForm();
     if (!form) return { status: "error", message: "форма закрылась сама", fatal: true };
@@ -458,7 +474,7 @@
       return processStudent(student, { save, recheck: true });
     }
     if (result === "saved" || result === "already") {
-      await sleep(STEP_DELAY_MS);
+      await sleep(pace(STEP_DELAY_MS, 60));
       await closePopup();
       return { status: result, message: result === "saved" ? `сохранено (${stats.questions} пунктов)` : "уже было заполнено" };
     }
@@ -648,7 +664,7 @@
       } else {
         errorsInRow = 0;
       }
-      await sleep(rand(250, 500));
+      await sleep(pace(rand(250, 500), 60));
     }
     setProgress(null);
     return { counters, aborted, processed };
@@ -688,7 +704,7 @@
     }
     await setStorage(BATCH_KEY, { status: "running", queue: selected, index: 0, startedAt: Date.now(), visits: 0 });
     setStatus(`Старт: классов — ${selected.length}. Перехожу в первый журнал…`);
-    await sleep(rand(500, 900));
+    await sleep(pace(rand(500, 900), 150));
     location.href = journalUrl(selected[0].id);
   }
 
@@ -796,7 +812,7 @@
       const next = fresh.queue[fresh.index];
       if (!next) return finishBatch(fresh, `Готово: пройдено классов — ${fresh.queue.length}. Ошибки — в «Результатах».`);
       setStatus(`Класс готов${aborted ? ` (${aborted})` : ""}. Перехожу к следующему: ${next.classLabel || next.text}…`);
-      await sleep(rand(900, 1600));
+      await sleep(pace(rand(900, 1600), 250));
       location.href = journalUrl(next.id);
     } finally {
       hideCursor();
@@ -1245,7 +1261,18 @@
       renderResults();
     });
 
-    body.append(classesSection, journalSection, statusSection, resultsToggle, results);
+    // Переключатель скорости — над разделами.
+    const speedRow = el("div", { class: "msa-speed" });
+    speedRow.append(el("span", { class: "msa-speed-label" }, "Скорость"));
+    const seg = el("div", { class: "msa-seg", role: "radiogroup", "aria-label": "Скорость" });
+    Object.entries(SPEEDS).forEach(([key, cfg]) => {
+      const b = el("button", { type: "button", role: "radio", "data-speed": key, "aria-checked": String(key === speed) }, cfg.label);
+      b.addEventListener("click", () => setSpeed(key));
+      seg.append(b);
+    });
+    speedRow.append(seg);
+
+    body.append(speedRow, classesSection, journalSection, statusSection, resultsToggle, results);
 
     root.append(head, body);
     document.body.append(root);
@@ -1263,6 +1290,17 @@
       root.classList.remove("msa-collapsed");
       root.hidden = false;
     }
+  });
+
+  function setSpeed(key) {
+    if (!SPEEDS[key]) return;
+    speed = key;
+    panel()?.querySelectorAll("[data-speed]").forEach((b) => b.setAttribute("aria-checked", String(b.dataset.speed === key)));
+    setStorage(SPEED_KEY, key);
+  }
+
+  getStorage(SPEED_KEY).then((saved) => {
+    if (SPEEDS[saved]) setSpeed(saved);
   });
 
   window.__MESH_SKILLS_AUTOFILL__ = { runAll, fillOpenForm, studentRows, findPopup, findForm, collectMyClasses, stop: stopEverything };
