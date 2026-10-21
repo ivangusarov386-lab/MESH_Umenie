@@ -624,6 +624,7 @@
       done.add(next.name);
       processed += 1;
       setStatus(`${prefix}${processed}. ${next.name}…`);
+      setProgress((processed - 1) / Math.max(processed, Math.min(limit, studentRows().length)));
 
       const res = await processStudent(next, { save });
       if (res.status === "stopped") break;
@@ -649,6 +650,7 @@
       }
       await sleep(rand(250, 500));
     }
+    setProgress(null);
     return { counters, aborted, processed };
   }
 
@@ -838,6 +840,56 @@
     return document.getElementById(PANEL_ID);
   }
 
+  // Иконки — статичный inline SVG (stroke = currentColor), без эмодзи:
+  // эмодзи по-разному рисуются на разных ОС. В разметку попадают только эти
+  // константы, никаких данных со страницы.
+  const ICONS = {
+    logo: '<path d="M9 11.5l2 2 4-4.5"/><path d="M12 3l2.1 1.6 2.6-.3 1 2.4 2.4 1-.3 2.6L21 12l-1.6 2.1.3 2.6-2.4 1-1 2.4-2.6-.3L12 21l-2.1-1.6-2.6.3-1-2.4-2.4-1 .3-2.6L3 12l1.6-2.1-.3-2.6 2.4-1 1-2.4 2.6.3z"/>',
+    chevron: '<path d="M9 6l6 6-6 6"/>',
+    minus: '<path d="M6 12h12"/>',
+    classes: '<path d="M3 7l9-4 9 4-9 4z"/><path d="M7 9.5V15c0 1.5 2.2 3 5 3s5-1.5 5-3V9.5"/>',
+    play: '<path d="M8 5.5v13l10.5-6.5z"/>',
+    eye: '<path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
+    wand: '<path d="M4 20l11-11"/><path d="M14 4v3M12.5 5.5h3M19 9v2.5M17.8 10.2h2.5"/><path d="M15 9l1.5-1.5"/>',
+    stop: '<rect x="6.5" y="6.5" width="11" height="11" rx="2"/>',
+    list: '<path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r=".8"/><circle cx="4.5" cy="12" r=".8"/><circle cx="4.5" cy="18" r=".8"/>',
+    refresh: '<path d="M20 11a8 8 0 0 0-14.3-4.5L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 14.3 4.5L20 16"/><path d="M20 20v-4h-4"/>',
+    download: '<path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M5 19.5h14"/>',
+    trash: '<path d="M5 7h14"/><path d="M10 7V5h4v2"/><path d="M7 7l1 12.5h8L17 7"/>',
+    external: '<path d="M14 5h5v5"/><path d="M19 5l-8 8"/><path d="M18 14v5H5V6h5"/>',
+    check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+    alert: '<path d="M12 4l9 16H3z"/><path d="M12 10v4.5"/><path d="M12 17.3v.2"/>'
+  };
+
+  function icon(name, cls = "") {
+    const span = el("span", { class: `msa-icon ${cls}`.trim(), "aria-hidden": "true" });
+    span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
+    return span;
+  }
+
+  // Кнопка: иконка + подпись (+ необязательная подсказка второй строкой).
+  function button({ action, label, hint, iconName, variant = "secondary", onClick, title }) {
+    const attrs = { class: `msa-btn msa-btn--${variant}`, type: "button" };
+    if (action) attrs["data-action"] = action;
+    if (title) attrs.title = title;
+    const b = el("button", attrs);
+    if (iconName) b.append(icon(iconName));
+    const text = el("span", { class: "msa-btn-text" });
+    text.append(el("span", { class: "msa-btn-label" }, label));
+    if (hint) text.append(el("span", { class: "msa-btn-hint" }, hint));
+    b.append(text);
+    if (onClick) b.addEventListener("click", onClick);
+    return b;
+  }
+
+  function setProgress(fraction) {
+    const bar = panel()?.querySelector(".msa-progress");
+    if (!bar) return;
+    const on = typeof fraction === "number";
+    bar.hidden = !on;
+    if (on) bar.firstElementChild.style.width = `${Math.round(Math.max(0, Math.min(1, fraction)) * 100)}%`;
+  }
+
   function setStatus(message, tone) {
     const node = panel()?.querySelector(".msa-status");
     if (!node) return;
@@ -854,7 +906,7 @@
     const list = panel()?.querySelector(".msa-log");
     if (!list) return;
     const item = el("li", { "data-status": status });
-    item.append(el("b", {}, name), document.createTextNode(` — ${message || status}`));
+    item.append(el("span", { class: "msa-dot" }), el("span", { class: "msa-log-name" }, name), el("span", { class: "msa-log-msg" }, message || status));
     list.append(item);
     list.scrollTop = list.scrollHeight;
   }
@@ -862,6 +914,8 @@
   function setBusy(busy) {
     const root = panel();
     if (!root) return;
+    root.classList.toggle("msa-busy", !!busy);
+    if (!busy) setProgress(null);
     root.querySelectorAll("[data-action]").forEach((b) => {
       if (b.dataset.action === "stop") b.disabled = !busy;
       else b.disabled = busy || b.dataset.empty === "1";
@@ -891,7 +945,7 @@
   function syncClassesButton() {
     const btn = panel()?.querySelector('[data-action="classes"]');
     const box = panel()?.querySelector(".msa-picker");
-    if (btn) btn.textContent = `Все мои классы ${box && !box.hidden ? "▾" : "▸"}`;
+    if (btn) btn.setAttribute("aria-expanded", String(!!box && !box.hidden));
   }
 
   async function renderPicker(open) {
@@ -904,9 +958,8 @@
     const cache = await getStorage(CLASSES_KEY);
     const classes = Array.isArray(cache?.list) ? cache.list : [];
     if (!classes.length) {
-      box.append(el("div", { class: "msa-picker-title" }, "Список классов ещё не загружен — он берётся со страницы «Мои классы»."));
-      const load = el("button", { class: "msa-btn", "data-action": "load" }, "Загрузить список классов");
-      load.addEventListener("click", loadClassesFromMyPage);
+      box.append(el("div", { class: "msa-note" }, "Список классов ещё не загружен — он берётся со страницы «Мои классы»."));
+      const load = button({ action: "load", label: "Загрузить список классов", iconName: "refresh", onClick: loadClassesFromMyPage });
       box.append(load);
       setBusy(running);
       return;
@@ -917,7 +970,8 @@
 
     const head = el("div", { class: "msa-picker-head" });
     head.append(el("span", { class: "msa-picker-title" }, `Классов: ${classes.length} · список от ${new Date(cache.at).toLocaleDateString("ru-RU")}`));
-    const reload = el("button", { class: "msa-link", "data-action": "load", title: "Перейти в «Мои классы» и собрать список заново" }, "обновить");
+    const reload = el("button", { class: "msa-link", "data-action": "load", type: "button", title: "Перейти в «Мои классы» и собрать список заново" });
+    reload.append(icon("refresh"), el("span", {}, "обновить"));
     reload.addEventListener("click", loadClassesFromMyPage);
     head.append(reload);
     box.append(head);
@@ -955,7 +1009,7 @@
     });
     box.append(list);
 
-    const start = el("button", { class: "msa-btn msa-btn-classes", "data-action": "start" });
+    const start = el("button", { class: "msa-btn msa-btn--primary msa-btn--block", "data-action": "start", type: "button" });
     box.append(start);
 
     const chosen = () => classBoxes.filter((cb) => cb.checked).map((cb) => classes.find((c) => String(c.id) === cb.dataset.id));
@@ -999,45 +1053,77 @@
 
   const STATUS_TEXT = { saved: "сохранено", already: "уже оценён", error: "ошибка", filled: "заполнено без сохранения" };
 
+  function chip(kind, value, title) {
+    const c = el("span", { class: `msa-chip msa-chip--${kind}`, title });
+    c.append(icon(kind === "saved" ? "check" : kind === "already" ? "refresh" : "alert"), el("span", {}, String(value)));
+    return c;
+  }
+
   async function renderResults() {
     const box = panel()?.querySelector(".msa-results");
+    syncResultsButton();
     if (!box || box.hidden) return;
     const all = (await getStorage(RESULTS_KEY)) || {};
     const entries = Object.values(all).sort((a, b) => String(a.classLabel || a.title).localeCompare(String(b.classLabel || b.title), "ru", { numeric: true }));
     box.textContent = "";
     if (!entries.length) {
-      box.append(el("div", { class: "msa-picker-title" }, "Результатов пока нет."));
+      box.append(el("div", { class: "msa-note" }, "Результатов пока нет — они появятся после первого прогона."));
       return;
     }
     entries.forEach((entry) => {
       const c = countStatuses(entry);
-      const details = el("details", { class: "msa-res-journal" });
-      if (c.error || entry.note) details.open = true;
-      const summary = el("summary", { "data-tone": c.error || entry.note ? "error" : "ok" });
-      summary.textContent = `${entry.classLabel ? `${entry.classLabel} · ` : ""}${entry.title} — сохранено ${c.saved}, уже ${c.already}, ошибок ${c.error}`;
+      const bad = c.error > 0 || !!entry.note;
+      const details = el("details", { class: `msa-card${bad ? " msa-card--bad" : ""}` });
+      if (bad) details.open = true;
+      const summary = el("summary", { class: "msa-card-head", title: `${entry.classLabel || ""} ${entry.title}`.trim() });
+      const titleBox = el("span", { class: "msa-card-title" });
+      titleBox.append(el("b", {}, entry.classLabel || "Журнал"), el("span", {}, entry.title));
+      const chips = el("span", { class: "msa-chips" });
+      chips.append(chip("saved", c.saved, "Сохранено"), chip("already", c.already, "Уже был оценён"));
+      if (c.error) chips.append(chip("error", c.error, "Ошибки — дозаполнить вручную"));
+      summary.append(titleBox, chips);
       details.append(summary);
-      if (entry.note) details.append(el("div", { class: "msa-res-note" }, `⚠ ${entry.note}`));
+      if (entry.note) {
+        const note = el("div", { class: "msa-card-note" });
+        note.append(icon("alert"), el("span", {}, entry.note));
+        details.append(note);
+      }
       const errors = Object.entries(entry.students).filter(([, st]) => st.status === "error");
       if (errors.length) {
-        const ul = el("ul", { class: "msa-res-list" });
-        errors.forEach(([name, st]) => ul.append(el("li", {}, `${name} — ${st.message}`)));
+        const ul = el("ul", { class: "msa-card-errors" });
+        errors.forEach(([name, st]) => {
+          const li = el("li");
+          li.append(el("b", {}, name), el("span", {}, st.message));
+          ul.append(li);
+        });
         details.append(ul);
       }
-      const open = el("a", { href: journalUrl(entry.id), class: "msa-res-open" }, "Открыть журнал");
+      const open = el("a", { href: journalUrl(entry.id), class: "msa-link msa-card-open" });
+      open.append(el("span", {}, "Открыть журнал"), icon("external"));
       details.append(open);
       box.append(details);
     });
-    const actions = el("div", { class: "msa-res-actions" });
-    const csv = el("button", { class: "msa-btn" }, "Скачать отчёт (CSV)");
-    csv.addEventListener("click", downloadResultsCsv);
-    const clear = el("button", { class: "msa-btn msa-btn-stop" }, "Очистить результаты");
-    clear.addEventListener("click", async () => {
-      if (!confirm("Удалить сохранённые результаты по всем классам?")) return;
-      await setStorage(RESULTS_KEY, {});
-      renderResults();
-    });
-    actions.append(csv, clear);
+    const actions = el("div", { class: "msa-row" });
+    actions.append(
+      button({ label: "Отчёт CSV", iconName: "download", onClick: downloadResultsCsv }),
+      button({
+        label: "Очистить",
+        iconName: "trash",
+        variant: "danger",
+        onClick: async () => {
+          if (!confirm("Удалить сохранённые результаты по всем классам?")) return;
+          await setStorage(RESULTS_KEY, {});
+          renderResults();
+        }
+      })
+    );
     box.append(actions);
+  }
+
+  function syncResultsButton() {
+    const btn = panel()?.querySelector(".msa-results-toggle");
+    const box = panel()?.querySelector(".msa-results");
+    if (btn) btn.setAttribute("aria-expanded", String(!!box && !box.hidden));
   }
 
   // CSV-инъекция формул (OWASP): значения, начинающиеся с = + - @ таб, экранируем
@@ -1082,8 +1168,8 @@
       counter.dataset.tone = "";
       return;
     }
-    counter.textContent = n ? `Учеников в журнале: ${n}` : "Ученики не найдены — откройте журнал предмета.";
-    counter.dataset.tone = n ? "" : "error";
+    counter.textContent = n ? `Учеников в журнале: ${n}` : "Откройте журнал предмета";
+    counter.dataset.tone = "";
   }
 
   function ensurePanel() {
@@ -1100,41 +1186,66 @@
     }
 
     root = el("div", { id: PANEL_ID, "data-msa-own": "" });
-    const head = el("div", { class: "msa-head" });
-    head.append(el("span", {}, "Учебные умения"));
-    const collapse = el("button", { class: "msa-collapse", title: "Свернуть" }, "–");
-    collapse.addEventListener("click", () => root.classList.toggle("msa-collapsed"));
+
+    // Шапка: знак, название, подзаголовок; клик по шапке — свернуть в «таблетку».
+    const head = el("div", { class: "msa-head", title: "Свернуть / развернуть" });
+    head.append(icon("logo", "msa-logo"));
+    const titles = el("div", { class: "msa-titles" });
+    titles.append(el("div", { class: "msa-title" }, "Учебные умения"), el("div", { class: "msa-subtitle" }, `Во всех пунктах — «${TARGET_OPTION}»`));
+    head.append(titles);
+    const collapse = el("button", { class: "msa-icon-btn msa-collapse", type: "button", "aria-label": "Свернуть" });
+    collapse.append(icon("minus"));
     head.append(collapse);
+    head.addEventListener("click", () => root.classList.toggle("msa-collapsed"));
 
     const body = el("div", { class: "msa-body" });
-    body.append(el("p", { class: "msa-hint" }, `Во всех пунктах ставится «${TARGET_OPTION}».`));
-    const buttons = [
-      ["classes", "Все мои классы ▸", () => togglePicker()],
-      ["all", "Этот журнал — заполнить и сохранить", () => runAll({ save: true })],
-      ["one", "Проверка на 1 ученике (без сохранения)", () => runAll({ limit: 1, save: false })],
-      ["form", "Заполнить открытую форму", () => fillOpenForm()],
-      ["stop", "Стоп", () => stopEverything()]
-    ];
+
+    // Раздел 1 — все классы.
+    const classesSection = el("section", { class: "msa-section" });
+    classesSection.append(el("div", { class: "msa-section-title" }, "Классы"));
+    const classesBtn = button({ action: "classes", label: "Все мои классы", hint: "все, параллель или выборочно", iconName: "classes", variant: "primary", onClick: () => togglePicker() });
+    classesBtn.classList.add("msa-btn--block", "msa-disclosure");
+    classesBtn.setAttribute("aria-expanded", "false");
+    classesBtn.append(icon("chevron", "msa-chevron"));
     const picker = el("div", { class: "msa-picker" });
     picker.hidden = true;
-    buttons.forEach(([action, label, handler]) => {
-      const b = el("button", { "data-action": action, class: `msa-btn msa-btn-${action}` }, label);
-      b.addEventListener("click", handler);
-      body.append(b);
-      // Блок выбора классов раскрывается прямо под своей кнопкой.
-      if (action === "classes") body.append(picker);
-    });
-    body.append(el("div", { class: "msa-count" }));
-    body.append(el("div", { class: "msa-status" }, "Нажмите кнопку, чтобы начать."));
-    body.append(el("ol", { class: "msa-log" }));
-    const resultsToggle = el("button", { class: "msa-btn msa-btn-results" }, "Результаты по классам");
+    classesSection.append(classesBtn, picker);
+
+    // Раздел 2 — текущий журнал.
+    const journalSection = el("section", { class: "msa-section" });
+    journalSection.append(el("div", { class: "msa-section-title" }, "Этот журнал"));
+    const runBtn = button({ action: "all", label: "Заполнить и сохранить", hint: "все ученики журнала", iconName: "play", onClick: () => runAll({ save: true }) });
+    runBtn.classList.add("msa-btn--block");
+    const row = el("div", { class: "msa-row" });
+    row.append(
+      button({ action: "one", label: "Проверка", iconName: "eye", variant: "ghost", title: "Заполнить форму первого ученика без сохранения — посмотреть глазами", onClick: () => runAll({ limit: 1, save: false }) }),
+      button({ action: "form", label: "Открытая форма", iconName: "wand", variant: "ghost", title: "Отметить «Почти всегда» в уже открытой форме; «Сохранить» нажимаете сами", onClick: () => fillOpenForm() })
+    );
+    journalSection.append(runBtn, row);
+
+    // Раздел 3 — ход работы.
+    const statusSection = el("section", { class: "msa-section msa-status-section" });
+    const statusTop = el("div", { class: "msa-status-top" });
+    statusTop.append(el("span", { class: "msa-count" }));
+    const stopBtn = button({ action: "stop", label: "Стоп", iconName: "stop", variant: "danger", onClick: () => stopEverything() });
+    stopBtn.classList.add("msa-btn--sm");
+    statusTop.append(stopBtn);
+    const progress = el("div", { class: "msa-progress" });
+    progress.append(el("span"));
+    progress.hidden = true;
+    statusSection.append(statusTop, el("div", { class: "msa-status" }, "Готово к работе."), progress, el("ol", { class: "msa-log" }));
+
+    // Подвал — результаты по классам.
+    const resultsToggle = el("button", { class: "msa-results-toggle msa-disclosure", type: "button", "aria-expanded": "false" });
+    resultsToggle.append(icon("list"), el("span", {}, "Результаты по классам"), icon("chevron", "msa-chevron"));
     const results = el("div", { class: "msa-results" });
     results.hidden = true;
     resultsToggle.addEventListener("click", () => {
       results.hidden = !results.hidden;
       renderResults();
     });
-    body.append(resultsToggle, results);
+
+    body.append(classesSection, journalSection, statusSection, resultsToggle, results);
 
     root.append(head, body);
     document.body.append(root);

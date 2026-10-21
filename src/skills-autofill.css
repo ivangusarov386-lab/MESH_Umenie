@@ -1,89 +1,245 @@
+/* ==========================================================
+   МЭШ — Оценка учебных умений · панель
+   Все цвета/радиусы/тени — только через токены ниже.
+   ========================================================== */
+
 #mesh-skills-panel {
-  --msa-accent: #6d28d9;
+  --msa-accent: #6236ff;
+  --msa-accent-ink: #4b1fe6;
+  --msa-accent-soft: #f0ecff;
+  --msa-accent-ring: rgba(98, 54, 255, 0.28);
   --msa-surface: #ffffff;
-  --msa-muted: #f4f2fb;
-  --msa-text: #1f1f2e;
-  --msa-ok: #15803d;
-  --msa-error: #b91c1c;
+  --msa-surface-2: #f7f6fb;
+  --msa-border: #e8e5f1;
+  --msa-border-strong: #d8d3ea;
+  --msa-text: #1b1930;
+  --msa-text-2: #3a374f;
+  --msa-muted: #6d6a83;
+  --msa-ok: #12804a;
+  --msa-ok-soft: #e7f6ee;
+  --msa-err: #cf3434;
+  --msa-err-soft: #fdeeee;
+  --msa-err-border: #f2c4c4;
+  --msa-neutral: #a9a5bd;
+  --msa-neutral-soft: #f0eff5;
+  --msa-grad-top: #7049ff;
+  --msa-grad-light: #8a6dff;
+  --msa-radius: 16px;
+  --msa-radius-sm: 10px;
+  --msa-shadow: 0 1px 2px rgba(20, 14, 60, 0.06), 0 12px 32px -8px rgba(30, 18, 90, 0.22);
+  --msa-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
   position: fixed;
   /* слева: справа выезжает форма МЭШ с кнопкой «Сохранить» — не закрываем её */
   left: 16px;
   bottom: 16px;
   z-index: 2147483000;
-  width: 300px;
-  background: var(--msa-surface);
+  width: 320px;
+  box-sizing: border-box;
   color: var(--msa-text);
-  border: 1px solid #d9d4f0;
-  border-radius: 12px;
-  box-shadow: 0 8px 28px rgba(30, 20, 70, 0.18);
-  font: 500 13px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: var(--msa-surface);
+  border: 1px solid var(--msa-border);
+  border-radius: var(--msa-radius);
+  box-shadow: var(--msa-shadow);
+  font: 500 13px/1.4 Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+  animation: msa-in 0.28s var(--msa-ease);
+}
+
+#mesh-skills-panel *,
+#mesh-skills-panel *::before,
+#mesh-skills-panel *::after {
+  box-sizing: border-box;
 }
 
 #mesh-skills-panel[hidden] {
   display: none;
 }
 
+@keyframes msa-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------- иконки ---------- */
+
+#mesh-skills-panel .msa-icon {
+  display: inline-flex;
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+#mesh-skills-panel .msa-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------- шапка ---------- */
+
 #mesh-skills-panel .msa-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 12px;
-  background: var(--msa-accent);
+  gap: 10px;
+  padding: 12px 12px 12px 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+#mesh-skills-panel .msa-logo {
+  width: 32px;
+  height: 32px;
+  padding: 6px;
   color: #fff;
-  border-radius: 11px 11px 0 0;
-  font-weight: 700;
+  background: linear-gradient(135deg, var(--msa-grad-light) 0%, var(--msa-accent) 55%, var(--msa-accent-ink) 100%);
+  border-radius: 10px;
+  box-shadow: 0 4px 10px -3px var(--msa-accent-ring);
+}
+
+#mesh-skills-panel .msa-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+#mesh-skills-panel .msa-title {
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+#mesh-skills-panel .msa-subtitle {
+  margin-top: 1px;
+  overflow: hidden;
+  color: var(--msa-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#mesh-skills-panel .msa-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--msa-muted);
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+#mesh-skills-panel .msa-icon-btn:hover {
+  color: var(--msa-text);
+  background: var(--msa-neutral-soft);
+}
+
+/* Свёрнуто — остаётся только шапка-«таблетка». */
+#mesh-skills-panel.msa-collapsed {
+  width: auto;
+  border-radius: 999px;
 }
 
 #mesh-skills-panel.msa-collapsed .msa-head {
-  border-radius: 11px;
+  padding: 6px 16px 6px 6px;
 }
 
-#mesh-skills-panel .msa-collapse {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
+#mesh-skills-panel.msa-collapsed .msa-logo {
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  border-radius: 999px;
 }
 
+#mesh-skills-panel.msa-collapsed .msa-subtitle,
+#mesh-skills-panel.msa-collapsed .msa-collapse,
 #mesh-skills-panel.msa-collapsed .msa-body {
   display: none;
 }
 
+/* ---------- тело и разделы ---------- */
+
 #mesh-skills-panel .msa-body {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px 12px;
+  gap: 14px;
+  max-height: calc(100vh - 110px);
+  padding: 2px 14px 14px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--msa-border-strong) transparent;
 }
 
-#mesh-skills-panel .msa-hint {
-  margin: 0 0 2px;
-  color: #555;
+#mesh-skills-panel .msa-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
+
+#mesh-skills-panel .msa-section + .msa-section {
+  padding-top: 14px;
+  border-top: 1px solid var(--msa-border);
+}
+
+#mesh-skills-panel .msa-section-title {
+  color: var(--msa-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+#mesh-skills-panel .msa-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+#mesh-skills-panel .msa-note {
+  color: var(--msa-muted);
+  font-size: 12px;
+}
+
+/* ---------- кнопки ---------- */
 
 #mesh-skills-panel .msa-btn {
-  padding: 7px 10px;
-  border: 1px solid var(--msa-accent);
-  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+  padding: 8px 12px;
+  color: var(--msa-text);
   background: var(--msa-surface);
-  color: var(--msa-accent);
+  border: 1px solid var(--msa-border-strong);
+  border-radius: var(--msa-radius-sm);
   font: inherit;
   font-weight: 600;
   text-align: left;
   cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, box-shadow 0.15s, transform 0.1s;
 }
 
-#mesh-skills-panel .msa-btn-all {
-  background: var(--msa-accent);
-  color: #fff;
-  font-weight: 700;
+#mesh-skills-panel .msa-btn .msa-icon {
+  color: var(--msa-accent);
 }
 
-#mesh-skills-panel .msa-btn-stop {
-  border-color: var(--msa-error);
-  color: var(--msa-error);
+#mesh-skills-panel .msa-btn:hover:not(:disabled) {
+  background: var(--msa-accent-soft);
+  border-color: var(--msa-accent);
+}
+
+#mesh-skills-panel .msa-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+#mesh-skills-panel .msa-btn:focus-visible,
+#mesh-skills-panel .msa-results-toggle:focus-visible,
+#mesh-skills-panel .msa-link:focus-visible,
+#mesh-skills-panel .msa-icon-btn:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--msa-accent-ring);
 }
 
 #mesh-skills-panel .msa-btn:disabled {
@@ -91,77 +247,146 @@
   cursor: default;
 }
 
-#mesh-skills-panel .msa-status {
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: var(--msa-muted);
+#mesh-skills-panel .msa-btn--block {
+  display: flex;
+  width: 100%;
 }
 
-#mesh-skills-panel .msa-count {
-  color: #555;
+#mesh-skills-panel .msa-btn-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
 }
 
-#mesh-skills-panel .msa-count[data-tone="error"] {
-  color: var(--msa-error);
+#mesh-skills-panel .msa-btn-label {
+  line-height: 1.25;
 }
 
-#mesh-skills-panel .msa-status[data-tone="ok"] {
-  color: var(--msa-ok);
+#mesh-skills-panel .msa-btn-hint {
+  color: var(--msa-muted);
+  font-size: 11.5px;
+  font-weight: 500;
 }
 
-#mesh-skills-panel .msa-status[data-tone="error"] {
-  color: var(--msa-error);
-}
-
-#mesh-skills-panel .msa-log {
-  max-height: 180px;
-  margin: 0;
-  padding-left: 22px;
-  overflow-y: auto;
-  font-size: 12px;
-}
-
-#mesh-skills-panel .msa-log:empty {
-  display: none;
-}
-
-#mesh-skills-panel .msa-log li[data-status="error"] {
-  color: var(--msa-error);
-}
-
-#mesh-skills-panel .msa-log li[data-status="saved"] {
-  color: var(--msa-ok);
-}
-
-/* Указатель, который «ведёт мышку» во время автозаполнения. */
-#mesh-skills-cursor {
-  position: fixed;
-  left: 0;
-  top: 0;
-  z-index: 2147483001;
-  width: 18px;
-  height: 18px;
-  margin: -2px 0 0 -2px;
-  pointer-events: none;
-  background: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 2l15 11-6.5 1.2L16 21l-2.6 1.2-3.4-6.9L5 19z' fill='%236d28d9' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E");
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
-  transition-property: transform;
-  transition-timing-function: cubic-bezier(0.25, 0.8, 0.35, 1);
-}
-
-#mesh-skills-cursor[hidden] {
-  display: none;
-}
-
-#mesh-skills-panel .msa-btn-classes {
-  background: var(--msa-accent);
+/* Главное действие — заливка. */
+#mesh-skills-panel .msa-btn--primary {
+  min-height: 44px;
   color: #fff;
+  background: linear-gradient(180deg, var(--msa-grad-top) 0%, var(--msa-accent) 100%);
+  border-color: transparent;
+  box-shadow: 0 6px 14px -6px var(--msa-accent-ring), inset 0 1px 0 rgba(255, 255, 255, 0.18);
   font-weight: 700;
 }
 
-#mesh-skills-panel .msa-btn-all {
-  background: var(--msa-surface);
+#mesh-skills-panel .msa-btn--primary .msa-icon,
+#mesh-skills-panel .msa-btn--primary .msa-btn-hint {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+#mesh-skills-panel .msa-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, var(--msa-accent) 0%, var(--msa-accent-ink) 100%);
+  border-color: transparent;
+}
+
+/* Второстепенное — мягкая подложка без рамки. */
+#mesh-skills-panel .msa-btn--ghost {
+  justify-content: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 10px;
+  background: var(--msa-surface-2);
+  border-color: transparent;
+  font-size: 12.5px;
+}
+
+#mesh-skills-panel .msa-btn--ghost .msa-btn-text {
+  flex: none;
+}
+
+#mesh-skills-panel .msa-btn--danger {
+  color: var(--msa-err);
+  border-color: var(--msa-err-border);
+}
+
+#mesh-skills-panel .msa-btn--danger .msa-icon {
+  color: currentColor;
+}
+
+#mesh-skills-panel .msa-btn--danger:hover:not(:disabled) {
+  color: var(--msa-err);
+  background: var(--msa-err-soft);
+  border-color: var(--msa-err);
+}
+
+#mesh-skills-panel .msa-btn--sm {
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+#mesh-skills-panel .msa-btn--sm .msa-icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* «Стоп» нужен только во время работы. */
+#mesh-skills-panel [data-action="stop"] {
+  display: none;
+}
+
+#mesh-skills-panel.msa-busy [data-action="stop"] {
+  display: inline-flex;
+}
+
+/* Раскрывашки: шеврон поворачивается. */
+#mesh-skills-panel .msa-chevron {
+  transition: transform 0.2s var(--msa-ease);
+}
+
+#mesh-skills-panel .msa-disclosure[aria-expanded="true"] .msa-chevron {
+  transform: rotate(90deg);
+}
+
+#mesh-skills-panel .msa-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
   color: var(--msa-accent);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+#mesh-skills-panel .msa-link:hover {
+  color: var(--msa-accent-ink);
+  text-decoration: underline;
+}
+
+#mesh-skills-panel .msa-link .msa-icon {
+  width: 13px;
+  height: 13px;
+}
+
+/* ---------- выбор классов ---------- */
+
+#mesh-skills-panel .msa-picker,
+#mesh-skills-panel .msa-results {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px;
+  background: var(--msa-surface-2);
+  border: 1px solid var(--msa-border);
+  border-radius: 12px;
+  animation: msa-in 0.2s var(--msa-ease);
 }
 
 #mesh-skills-panel .msa-picker[hidden],
@@ -169,115 +394,398 @@
   display: none;
 }
 
-#mesh-skills-panel .msa-picker,
-#mesh-skills-panel .msa-results {
+#mesh-skills-panel .msa-picker-head {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 8px;
-  border-radius: 8px;
-  background: var(--msa-muted);
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-#mesh-skills-panel .msa-picker-title[data-tone="error"] {
-  color: var(--msa-error);
+#mesh-skills-panel .msa-picker-title {
+  color: var(--msa-muted);
+  font-size: 12px;
 }
 
 #mesh-skills-panel .msa-picker-list {
-  max-height: 200px;
-  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-}
-
-#mesh-skills-panel .msa-picker-item {
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-#mesh-skills-panel .msa-results {
-  max-height: 320px;
+  max-height: 240px;
   overflow-y: auto;
-}
-
-#mesh-skills-panel .msa-res-journal summary {
-  cursor: pointer;
-  font-weight: 600;
-  font-size: 12px;
-}
-
-#mesh-skills-panel .msa-res-journal summary[data-tone="ok"] {
-  color: var(--msa-ok);
-}
-
-#mesh-skills-panel .msa-res-journal summary[data-tone="error"] {
-  color: var(--msa-error);
-}
-
-#mesh-skills-panel .msa-res-note,
-#mesh-skills-panel .msa-res-list {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: var(--msa-error);
-}
-
-#mesh-skills-panel .msa-res-list {
-  padding-left: 18px;
-}
-
-#mesh-skills-panel .msa-res-open {
-  display: inline-block;
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--msa-accent);
-}
-
-#mesh-skills-panel .msa-res-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-#mesh-skills-panel .msa-body {
-  max-height: calc(100vh - 90px);
-  overflow-y: auto;
-}
-
-#mesh-skills-panel .msa-picker-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 8px;
-  font-size: 12px;
-}
-
-#mesh-skills-panel .msa-link {
-  border: 0;
-  padding: 0;
-  background: none;
-  color: var(--msa-accent);
-  font: inherit;
-  text-decoration: underline;
-  cursor: pointer;
+  background: var(--msa-surface);
+  border: 1px solid var(--msa-border);
+  border-radius: var(--msa-radius-sm);
+  scrollbar-width: thin;
 }
 
 #mesh-skills-panel .msa-picker-group {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding-top: 4px;
-  border-top: 1px solid #e2ddf3;
+  padding: 4px 0;
+  border-top: 1px solid var(--msa-border);
 }
 
-#mesh-skills-panel .msa-picker-all,
+#mesh-skills-panel .msa-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+
+#mesh-skills-panel .msa-picker-item:hover {
+  background: var(--msa-accent-soft);
+}
+
+#mesh-skills-panel .msa-picker-item input {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--msa-accent);
+  cursor: pointer;
+}
+
+#mesh-skills-panel .msa-picker-all {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  font-weight: 700;
+}
+
 #mesh-skills-panel .msa-picker-parallel {
   font-weight: 700;
 }
 
 #mesh-skills-panel .msa-picker-class {
-  padding-left: 18px;
+  padding-left: 33px;
+  color: var(--msa-text-2);
+  font-weight: 500;
+}
+
+/* ---------- статус и ход работы ---------- */
+
+#mesh-skills-panel .msa-status-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+}
+
+#mesh-skills-panel .msa-count {
+  color: var(--msa-muted);
+  font-size: 12px;
+}
+
+#mesh-skills-panel .msa-count[data-tone="error"] {
+  color: var(--msa-err);
+}
+
+#mesh-skills-panel .msa-status {
+  padding: 9px 11px;
+  background: var(--msa-surface-2);
+  border-left: 3px solid var(--msa-border-strong);
+  border-radius: 4px var(--msa-radius-sm) var(--msa-radius-sm) 4px;
+  font-size: 12.5px;
+}
+
+#mesh-skills-panel.msa-busy .msa-status {
+  border-left-color: var(--msa-accent);
+}
+
+#mesh-skills-panel .msa-status[data-tone="ok"] {
+  color: var(--msa-ok);
+  background: var(--msa-ok-soft);
+  border-left-color: var(--msa-ok);
+}
+
+#mesh-skills-panel .msa-status[data-tone="error"] {
+  color: var(--msa-err);
+  background: var(--msa-err-soft);
+  border-left-color: var(--msa-err);
+}
+
+#mesh-skills-panel .msa-progress {
+  height: 4px;
+  overflow: hidden;
+  background: var(--msa-neutral-soft);
+  border-radius: 999px;
+}
+
+#mesh-skills-panel .msa-progress[hidden] {
+  display: none;
+}
+
+#mesh-skills-panel .msa-progress > span {
+  display: block;
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, var(--msa-grad-light), var(--msa-accent));
+  border-radius: inherit;
+  transition: width 0.4s var(--msa-ease);
+}
+
+#mesh-skills-panel .msa-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 168px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  scrollbar-width: thin;
+}
+
+#mesh-skills-panel .msa-log:empty {
+  display: none;
+}
+
+#mesh-skills-panel .msa-log li {
+  display: grid;
+  grid-template-columns: 8px 1fr;
+  column-gap: 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  animation: msa-in 0.2s var(--msa-ease);
+}
+
+#mesh-skills-panel .msa-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 5px;
+  background: var(--msa-border-strong);
+  border-radius: 999px;
+}
+
+#mesh-skills-panel .msa-log-name {
+  font-weight: 600;
+}
+
+#mesh-skills-panel .msa-log-msg {
+  grid-column: 2;
+  color: var(--msa-muted);
+  font-size: 11.5px;
+}
+
+#mesh-skills-panel .msa-log li[data-status="saved"] .msa-dot {
+  background: var(--msa-ok);
+}
+
+#mesh-skills-panel .msa-log li[data-status="already"] .msa-dot {
+  background: var(--msa-neutral);
+}
+
+#mesh-skills-panel .msa-log li[data-status="filled"] .msa-dot {
+  background: var(--msa-accent);
+}
+
+#mesh-skills-panel .msa-log li[data-status="error"] {
+  background: var(--msa-err-soft);
+}
+
+#mesh-skills-panel .msa-log li[data-status="error"] .msa-dot {
+  background: var(--msa-err);
+}
+
+#mesh-skills-panel .msa-log li[data-status="error"] .msa-log-msg {
+  color: var(--msa-err);
+}
+
+/* ---------- результаты ---------- */
+
+#mesh-skills-panel .msa-results-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: -2px;
+  padding: 12px 2px 0;
+  color: var(--msa-text);
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--msa-border);
+  border-radius: 0;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#mesh-skills-panel .msa-results-toggle > span:nth-child(2) {
+  flex: 1;
+  text-align: left;
+}
+
+#mesh-skills-panel .msa-results-toggle .msa-icon {
+  color: var(--msa-muted);
+}
+
+#mesh-skills-panel .msa-results-toggle:hover .msa-icon {
+  color: var(--msa-accent);
+}
+
+#mesh-skills-panel .msa-results {
+  max-height: 340px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+#mesh-skills-panel .msa-card {
+  background: var(--msa-surface);
+  border: 1px solid var(--msa-border);
+  border-radius: 12px;
+}
+
+#mesh-skills-panel .msa-card--bad {
+  border-color: var(--msa-err-border);
+}
+
+#mesh-skills-panel .msa-card[open] {
+  padding-bottom: 10px;
+}
+
+#mesh-skills-panel .msa-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  list-style: none;
+  cursor: pointer;
+}
+
+#mesh-skills-panel .msa-card-head::-webkit-details-marker {
+  display: none;
+}
+
+#mesh-skills-panel .msa-card-title {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+#mesh-skills-panel .msa-card-title b {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+#mesh-skills-panel .msa-card-title span {
+  overflow: hidden;
+  color: var(--msa-muted);
+  font-size: 11.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+#mesh-skills-panel .msa-chips {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+#mesh-skills-panel .msa-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px 2px 5px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+#mesh-skills-panel .msa-chip .msa-icon {
+  width: 12px;
+  height: 12px;
+}
+
+#mesh-skills-panel .msa-chip--saved {
+  color: var(--msa-ok);
+  background: var(--msa-ok-soft);
+}
+
+#mesh-skills-panel .msa-chip--already {
+  color: var(--msa-muted);
+  background: var(--msa-neutral-soft);
+}
+
+#mesh-skills-panel .msa-chip--error {
+  color: var(--msa-err);
+  background: var(--msa-err-soft);
+}
+
+#mesh-skills-panel .msa-card-note {
+  display: flex;
+  gap: 6px;
+  margin: 0 10px 6px;
+  padding: 7px 9px;
+  color: var(--msa-err);
+  background: var(--msa-err-soft);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+#mesh-skills-panel .msa-card-note .msa-icon {
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+}
+
+#mesh-skills-panel .msa-card-errors {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 10px 8px;
+  padding: 0;
+  list-style: none;
+}
+
+#mesh-skills-panel .msa-card-errors li {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 9px;
+  background: var(--msa-surface-2);
+  border-left: 2px solid var(--msa-err);
+  border-radius: 2px 8px 8px 2px;
+  font-size: 12px;
+}
+
+#mesh-skills-panel .msa-card-errors li span {
+  color: var(--msa-err);
+  font-size: 11.5px;
+}
+
+#mesh-skills-panel .msa-card-open {
+  margin: 0 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #mesh-skills-panel,
+  #mesh-skills-panel * {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* ---------- указатель автозаполнения ---------- */
+
+#mesh-skills-cursor {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 2147483001;
+  width: 18px;
+  height: 18px;
+  margin: -2px 0 0 -3px;
+  pointer-events: none;
+  background: no-repeat center / contain url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M4 2l15 11-6.5 1.2L16 21l-2.6 1.2-3.4-6.9L5 19z' fill='%236236ff' stroke='white' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E");
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
+  transition-property: transform;
+  transition-timing-function: cubic-bezier(0.25, 0.8, 0.35, 1);
+}
+
+#mesh-skills-cursor[hidden] {
+  display: none;
 }
