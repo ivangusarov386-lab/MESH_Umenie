@@ -309,13 +309,13 @@
     return found;
   }
 
-  // Если на странице несколько форм (старая от прошлого ученика ещё в DOM),
-  // берём ту, в которой есть варианты ответа, а из таких — последнюю
-  // добавленную (новая выезжающая панель добавляется в конец body).
+  // Открытая форма = форма С ВАРИАНТАМИ ОТВЕТА. Старая оболочка от прошлого
+  // ученика (без вопросов) формой не считается — иначе после «Сохранить»
+  // казалось бы, что форма не закрылась. Из нескольких — последняя
+  // добавленная (новая выезжающая панель добавляется в конец body).
   function findForm() {
-    const list = formCandidates();
-    const withOptions = list.filter((f) => textEls(ANY_OPTION, f).length);
-    return withOptions[withOptions.length - 1] || list[list.length - 1] || null;
+    const withOptions = formCandidates().filter((f) => textEls(ANY_OPTION, f).length);
+    return withOptions[withOptions.length - 1] || null;
   }
 
   // Форма МЭШ на долю секунды пропадает из DOM, когда перерисовывается
@@ -324,16 +324,18 @@
   const FORM_GRACE_MS = 4000;
 
   function waitForForm(ms = FORM_GRACE_MS) {
-    return waitFor(() => {
-      const f = findForm();
-      return f && textEls(ANY_OPTION, f).length ? f : null;
-    }, ms);
+    return waitFor(findForm, ms);
   }
 
   // «Отмена» при отметках в форме вызывает диалог «Выход без сохранения» —
   // мы бросаем форму намеренно, поэтому подтверждаем выход.
   async function confirmDiscardIfAsked(timeoutMs = 2000) {
-    const btn = await waitFor(() => (textEls(TXT_DISCARD_TITLE).length ? buttonsWithText(TXT_DISCARD_CONFIRM)[0] : null), timeoutMs);
+    // Ждём либо диалог, либо закрытия формы (тогда диалога не будет).
+    const outcome = await waitFor(() => {
+      if (textEls(TXT_DISCARD_TITLE).length) return buttonsWithText(TXT_DISCARD_CONFIRM)[0] || null;
+      return findForm() ? null : "closed";
+    }, timeoutMs);
+    const btn = outcome && outcome !== "closed" ? outcome : null;
     if (btn) {
       await humanClick(btn);
       await waitFor(() => !textEls(TXT_DISCARD_TITLE).length, 3000);
@@ -873,7 +875,15 @@
     setStatus(`Обход ${selected.length} класс(ов) идёт в фоновой вкладке — можно работать дальше.`);
     chrome.runtime.sendMessage({ source: "mesh-skills", type: "start-worker", url: location.origin + journalUrl(selected[0].id) }, (res) => {
       void chrome.runtime.lastError;
-      if (!res?.ok) setStatus("Не удалось открыть фоновую вкладку.", "error");
+      if (res?.ok) return;
+      setStatus("Не удалось открыть фоновую вкладку. Снимите галочку «В фоновой вкладке» и запустите снова.", "error");
+      getStorage(BATCH_KEY).then((b) => {
+        if (b?.status !== "running") return;
+        b.status = "stopped";
+        b.stopReason = "фоновая вкладка не открылась";
+        b.finishedAt = Date.now();
+        setStorage(BATCH_KEY, b);
+      });
     });
   }
 
@@ -894,13 +904,45 @@
 
   // Рабочая вкладка пересылает свой статус/ленту в storage — их показывают
   // панели во всех остальных вкладках МЭШ.
+  // Через sleep(), а не setTimeout: в скрытой вкладке таймер мог бы
+  // сработать только через минуту, и панели показывали бы старое.
   function broadcastProgress() {
     if (!isWorker || progressTimer) return;
-    progressTimer = setTimeout(() => {
+    progressTimer = true;
+    sleep(250).then(() => {
       progressTimer = null;
       setStorage(PROGRESS_KEY, { ...progressState, log: progressState.log.slice(-60), at: Date.now() });
-    }, 250);
+    });
   }
+
+  // Рабочая вкладка раз в 20 с отмечается «жива» (даже если ученик долго
+  // грузится); наблюдатели по этой отметке узнают, что вкладка пропала.
+  const HEARTBEAT_MS = 20000;
+  const STALE_MS = 180000;
+
+  async function heartbeatLoop() {
+    while (isWorker) {
+      await sleep(HEARTBEAT_MS);
+      if (!isWorker) break;
+      setStorage(PROGRESS_KEY, { ...progressState, log: progressState.log.slice(-60), at: Date.now() });
+    }
+  }
+
+  // Наблюдатель: обход «идёт», а от рабочей вкладки давно ни звука (браузер
+  // перезапускали, вкладку выгрузили) — снимаем зависшее состояние.
+  async function checkStaleBatch() {
+    if (isWorker) return;
+    const batch = await getStorage(BATCH_KEY);
+    if (batch?.status !== "running" || batch.mode !== "background") return;
+    const progress = await getStorage(PROGRESS_KEY);
+    const last = Math.max(progress?.at || 0, batch.startedAt || 0);
+    if (Date.now() - last < STALE_MS) return;
+    batch.status = "stopped";
+    batch.stopReason = "фоновая вкладка не отвечает больше 3 минут (закрыта или выгружена браузером) — запустите снова, сделанное сохранено";
+    batch.finishedAt = Date.now();
+    await setStorage(BATCH_KEY, batch);
+  }
+  setInterval(checkStaleBatch, 30000);
 
   function myTabId() {
     return new Promise((resolve) => {
@@ -1037,6 +1079,7 @@
         return;
       }
       isWorker = true;
+      heartbeatLoop();
     }
 
     const item = batch.queue[batch.index];
