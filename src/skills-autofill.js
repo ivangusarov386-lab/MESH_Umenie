@@ -21,10 +21,14 @@
   window.__meshSkillsAutofillInstalled = true;
 
   const PANEL_ID = "mesh-skills-panel";
+  const CURSOR_ID = "mesh-skills-cursor";
   const TARGET_OPTION = "Почти всегда";
   const ANY_OPTION = "Почти никогда";
   const TXT_POPUP_TITLE = "Информация об учащемся";
   const TXT_OPEN_FORM = "Оценить учебные умения";
+  // Если ученика уже оценивали, вместо «Оценить…» в попапе кнопка «Повторно оценить…».
+  const TXT_REOPEN_FORM = "Повторно оценить учебные умения";
+  const TXT_DETAILS = "Подробнее";
   const TXT_FORM_TITLE = "Оценка учебных умений";
   const TXT_SAVE = "Сохранить";
   const TXT_CANCEL = "Отмена";
@@ -56,6 +60,16 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  function rand(min, max) {
+    return Math.round(min + Math.random() * (max - min));
+  }
+
+  // Наши собственные элементы (панель, курсор) — не часть страницы МЭШ.
+  function isOwn(node) {
+    const el = node?.nodeType === 1 ? node : node?.parentElement;
+    return !!el?.closest?.("[data-msa-own]");
+  }
+
   // Элементы, в которых есть текстовый узел ровно с этим текстом.
   // TreeWalker по текстовым узлам — быстрее, чем textContent у каждого элемента
   // (в журнале тысячи ячеек).
@@ -67,7 +81,7 @@
     while (node) {
       if (norm(node.nodeValue) === text) {
         const el = node.parentElement;
-        if (el && isVisible(el) && !el.closest(`#${PANEL_ID}`)) result.push(el);
+        if (el && isVisible(el) && !isOwn(el)) result.push(el);
       }
       node = walker.nextNode();
     }
@@ -87,17 +101,85 @@
     return !btn || btn.disabled || btn.getAttribute("aria-disabled") === "true" || btn.classList.contains("Mui-disabled");
   }
 
-  // Полная последовательность событий указателя — часть React-обработчиков
+  // ---------- «человеческий» клик ----------
+  // Курсор-указатель плавно едет к цели, точка клика — случайная внутри
+  // элемента (не ровно в центре), перед нажатием — наведение и короткая пауза.
+  // Полная последовательность pointer/mouse-событий: часть React-обработчиков
   // висит на mousedown/pointerdown, а не на click.
-  function realClick(el) {
-    if (!el) return;
-    el.scrollIntoView({ block: "center", inline: "nearest" });
-    const rect = el.getBoundingClientRect();
-    const opts = { bubbles: true, cancelable: true, view: window, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0 };
-    el.dispatchEvent(new PointerEvent("pointerdown", { ...opts, pointerId: 1, isPrimary: true }));
-    el.dispatchEvent(new MouseEvent("mousedown", opts));
-    el.dispatchEvent(new PointerEvent("pointerup", { ...opts, pointerId: 1, isPrimary: true }));
-    el.dispatchEvent(new MouseEvent("mouseup", opts));
+
+  let cursorPos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+
+  function cursorEl() {
+    let el = document.getElementById(CURSOR_ID);
+    if (!el) {
+      el = document.createElement("div");
+      el.id = CURSOR_ID;
+      el.setAttribute("data-msa-own", "");
+      el.hidden = true;
+      document.body.append(el);
+    }
+    return el;
+  }
+
+  function hideCursor() {
+    const el = document.getElementById(CURSOR_ID);
+    if (el) el.hidden = true;
+  }
+
+  // Элемент целиком виден: и в окне, и в каждом прокручиваемом предке (панель формы).
+  function inView(el) {
+    const r = el.getBoundingClientRect();
+    if (r.top < 70 || r.bottom > window.innerHeight - 10) return false;
+    let p = el.parentElement;
+    while (p && p !== document.body) {
+      const style = getComputedStyle(p);
+      if (/(auto|scroll|hidden)/.test(style.overflowY) && p.scrollHeight > p.clientHeight + 4) {
+        const pr = p.getBoundingClientRect();
+        if (r.top < pr.top || r.bottom > pr.bottom) return false;
+      }
+      p = p.parentElement;
+    }
+    return true;
+  }
+
+  function fire(el, type, x, y) {
+    const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y, button: 0 };
+    const Ctor = type.startsWith("pointer") ? PointerEvent : MouseEvent;
+    el.dispatchEvent(new Ctor(type, type.startsWith("pointer") ? { ...opts, pointerId: 1, isPrimary: true, pointerType: "mouse" } : opts));
+  }
+
+  async function moveCursorTo(x, y) {
+    const el = cursorEl();
+    el.hidden = false;
+    const dist = Math.hypot(x - cursorPos.x, y - cursorPos.y);
+    const ms = Math.min(420, Math.max(110, dist * 0.45)) + rand(0, 60);
+    el.style.transitionDuration = `${ms}ms`;
+    el.style.transform = `translate(${x}px, ${y}px)`;
+    cursorPos = { x, y };
+    await sleep(ms);
+  }
+
+  async function humanClick(el) {
+    if (!el || !el.isConnected) return;
+    if (!inView(el)) {
+      el.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+      await sleep(rand(320, 480));
+    }
+    const r = el.getBoundingClientRect();
+    // Случайная точка в центральной части элемента.
+    const x = r.left + r.width * (0.3 + Math.random() * 0.4);
+    const y = r.top + r.height * (0.35 + Math.random() * 0.3);
+    await moveCursorTo(x, y);
+    fire(el, "pointerover", x, y);
+    fire(el, "mouseover", x, y);
+    fire(el, "pointermove", x, y);
+    fire(el, "mousemove", x, y);
+    await sleep(rand(40, 110));
+    fire(el, "pointerdown", x, y);
+    fire(el, "mousedown", x, y);
+    await sleep(rand(45, 95));
+    fire(el, "pointerup", x, y);
+    fire(el, "mouseup", x, y);
     el.click();
   }
 
@@ -113,11 +195,12 @@
   }
 
   // Поднимаемся от элемента-заголовка до контейнера, в котором есть нужная кнопка.
-  function containerWith(titleText, buttonText) {
+  function containerWith(titleText, buttonTexts) {
+    const texts = [].concat(buttonTexts);
     for (const title of textEls(titleText)) {
       let el = title.parentElement;
       while (el && el !== document.body) {
-        if (buttonsWithText(buttonText, el).length) return el;
+        if (texts.some((t) => buttonsWithText(t, el).length)) return el;
         el = el.parentElement;
       }
     }
@@ -130,7 +213,7 @@
     const seen = new Set();
     const list = [];
     document.querySelectorAll("tr").forEach((row) => {
-      if (row.closest(`#${PANEL_ID}`)) return;
+      if (isOwn(row)) return;
       const isStudent = row.querySelector('[data-test-component^="markCell-"], [data-test-component^="studentCellInfoComments-"]');
       if (!isStudent) return;
       const nameEl = row.querySelector("span[title]");
@@ -143,7 +226,7 @@
   }
 
   function findPopup() {
-    return containerWith(TXT_POPUP_TITLE, TXT_OPEN_FORM);
+    return containerWith(TXT_POPUP_TITLE, [TXT_OPEN_FORM, TXT_REOPEN_FORM, TXT_DETAILS]);
   }
 
   function findForm() {
@@ -153,7 +236,7 @@
   async function openPopupFor(student) {
     const targets = [student.nameEl, student.nameEl.closest("td, th")].filter(Boolean);
     for (const target of targets) {
-      realClick(target);
+      await humanClick(target);
       const popup = await waitFor(findPopup, POPUP_TIMEOUT_MS);
       if (popup) return popup;
     }
@@ -165,33 +248,34 @@
     if (!popup) return true;
     // Крестик в шапке попапа — кнопка без текста.
     const close = [...popup.querySelectorAll("button, [role='button']")].find((b) => isVisible(b) && !norm(b.textContent));
-    if (close) realClick(close);
+    if (close) await humanClick(close);
     else document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
     return !!(await waitFor(() => !findPopup(), 3000));
   }
 
-  // Отметить «Почти всегда» во всех видимых пунктах формы. Возвращает число новых кликов.
-  function fillVisible(form) {
+  function optionState(el) {
+    const label = el.closest("label");
+    const input = label?.querySelector("input[type='radio']") || el.closest("[role='radio']")?.querySelector("input[type='radio']");
+    if (input) return { target: label || input, checked: input.checked, known: true };
+    const roleRadio = el.closest("[role='radio']");
+    if (roleRadio) return { target: roleRadio, checked: roleRadio.getAttribute("aria-checked") === "true", known: true };
+    return { target: label || el, checked: false, known: false };
+  }
+
+  // Отметить «Почти всегда» в видимых пунктах — по одному, с паузами, как человек
+  // быстро щёлкает мышкой. Возвращает число кликов.
+  async function fillVisible(form) {
     let clicks = 0;
-    textEls(TARGET_OPTION, form).forEach((el) => {
-      const label = el.closest("label");
-      const input = label?.querySelector("input[type='radio']") || el.closest("[role='radio']")?.querySelector("input[type='radio']");
-      if (input) {
-        if (input.checked) return;
-        realClick(label || input);
-        clicks += 1;
-        return;
-      }
-      const roleRadio = el.closest("[role='radio']");
-      if (roleRadio) {
-        if (roleRadio.getAttribute("aria-checked") === "true") return;
-        realClick(roleRadio);
-        clicks += 1;
-        return;
-      }
-      realClick(label || el);
+    for (const el of textEls(TARGET_OPTION, form)) {
+      if (stopRequested) break;
+      if (!el.isConnected) continue;
+      const opt = optionState(el);
+      if (opt.checked) continue;
+      await humanClick(opt.target);
       clicks += 1;
-    });
+      // Обычный темп — 0,2–0,5 с между пунктами, изредка «вчитывается» подольше.
+      await sleep(Math.random() < 0.12 ? rand(450, 900) : rand(200, 480));
+    }
     return clicks;
   }
 
@@ -210,9 +294,7 @@
     const questions = textEls(ANY_OPTION, form).length;
     let checked = 0;
     textEls(TARGET_OPTION, form).forEach((el) => {
-      const input = el.closest("label")?.querySelector("input[type='radio']");
-      const roleRadio = el.closest("[role='radio']");
-      if (input?.checked || roleRadio?.getAttribute("aria-checked") === "true") checked += 1;
+      if (optionState(el).checked) checked += 1;
     });
     return { questions, checked };
   }
@@ -220,19 +302,22 @@
   // Проходим форму сверху вниз: на случай, если пункты дорисовываются при прокрутке.
   async function fillForm(form) {
     const scroller = scrollableIn(form);
-    if (scroller) scroller.scrollTop = 0;
+    if (scroller && scroller.scrollTop > 0) {
+      scroller.scrollTo({ top: 0, behavior: "smooth" });
+      await sleep(350);
+    }
     for (let guard = 0; guard < 60; guard += 1) {
       if (stopRequested) return formStats(form);
-      fillVisible(form);
-      await sleep(120);
+      await fillVisible(form);
+      await sleep(rand(100, 180));
       if (!scroller) break;
       const atBottom = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 4;
       if (atBottom) {
-        if (fillVisible(form) === 0) break;
+        if ((await fillVisible(form)) === 0) break;
         continue;
       }
-      scroller.scrollTop += Math.max(200, scroller.clientHeight * 0.8);
-      await sleep(150);
+      scroller.scrollBy({ top: Math.max(200, scroller.clientHeight * 0.8), behavior: "smooth" });
+      await sleep(rand(300, 420));
     }
     return formStats(form);
   }
@@ -250,7 +335,7 @@
         resolve();
       };
       const observer = new MutationObserver((mutations) => {
-        if (mutations.every((m) => m.target?.closest?.(`#${PANEL_ID}`) || m.target?.parentElement?.closest?.(`#${PANEL_ID}`))) return;
+        if (mutations.every((m) => isOwn(m.target))) return;
         clearTimeout(timer);
         timer = setTimeout(finish, quietMs);
       });
@@ -291,7 +376,8 @@
       if (stopRequested) return "stopped";
       const enabled = await waitFor(currentSaveButton, SAVE_ENABLE_TIMEOUT_MS);
       if (enabled) {
-        realClick(enabled);
+        await sleep(rand(350, 800));
+        await humanClick(enabled);
         const closed = await waitFor(() => !findForm(), SAVE_CLOSE_TIMEOUT_MS);
         return closed ? "saved" : "not-closed";
       }
@@ -302,7 +388,7 @@
       // и сейчас всё отмечено, а «Сохранить» неактивна из-за отсутствия изменений.
       if (isComplete(stats)) {
         const cancel = buttonsWithText(TXT_CANCEL, form)[0];
-        if (cancel) realClick(cancel);
+        if (cancel) await humanClick(cancel);
         await waitFor(() => !findForm(), 4000);
         // Если форма открылась уже заполненной — это правда «уже было». Иначе
         // (ответы догрузились после наших кликов) не верим и перепроверяем
@@ -326,8 +412,16 @@
     await sleep(STEP_DELAY_MS);
 
     const openBtn = buttonsWithText(TXT_OPEN_FORM, popup)[0];
-    if (!openBtn) return { status: "error", message: "нет кнопки «Оценить учебные умения»" };
-    realClick(openBtn);
+    if (!openBtn) {
+      // Уже оценён — в попапе «Повторно оценить…». Не трогаем, сразу к следующему.
+      if (buttonsWithText(TXT_REOPEN_FORM, popup)[0]) {
+        await closePopup();
+        return { status: "already", message: "уже оценён (есть «Повторно оценить»)" };
+      }
+      await closePopup();
+      return { status: "error", message: "нет кнопки «Оценить учебные умения»" };
+    }
+    await humanClick(openBtn);
 
     const opened = await waitFor(() => {
       const f = findForm();
@@ -418,6 +512,7 @@
       if (!save) setStatus(`${tail} Форма заполнена, сохраните вручную или нажмите «Отмена».`);
       else setStatus(`${tail} Сохранено: ${counters.saved}, уже было: ${counters.already}, ошибок: ${counters.error}.`, counters.error ? "error" : "ok");
     } finally {
+      hideCursor();
       running = false;
       setBusy(false);
     }
@@ -431,6 +526,7 @@
     }
     stopRequested = false;
     const stats = await fillUntilStable();
+    hideCursor();
     setStatus(`Отмечено «${TARGET_OPTION}»: ${stats.checked} из ${stats.questions}. Проверьте и нажмите «Сохранить».`, stats.checked >= stats.questions ? "ok" : "error");
   }
 
@@ -504,7 +600,7 @@
       return;
     }
 
-    root = el("div", { id: PANEL_ID });
+    root = el("div", { id: PANEL_ID, "data-msa-own": "" });
     const head = el("div", { class: "msa-head" });
     head.append(el("span", {}, "Учебные умения"));
     const collapse = el("button", { class: "msa-collapse", title: "Свернуть" }, "–");
