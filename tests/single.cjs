@@ -56,7 +56,7 @@ const only = process.argv[2];
     await p.click(`[data-speed=${sc.speed || 'fast'}]`);
     const t0 = Date.now();
     await p.click('[data-action=all]');
-    await p.waitForFunction(() => /^(Готово|Прервано|Остановлено)/.test(document.querySelector('.msa-status')?.textContent || ''), null, { timeout: 600000 });
+    await p.waitForFunction(() => /^(Готово\.|Прервано|Остановлено)/.test(document.querySelector('.msa-status')?.textContent || ''), null, { timeout: 600000 });
     const secs = ((Date.now() - t0) / 1000).toFixed(0);
     const st = await p.evaluate(() => ({ saved: window.saved, events: window.events,
       dlg: [...document.querySelectorAll('.dlg')].length,
@@ -91,7 +91,7 @@ const only = process.argv[2];
     await p.waitForFunction(() => /Учеников в журнале: 6/.test(document.querySelector('.msa-count')?.textContent || ''));
     await p.selectOption('[data-answer]', 'Почти всегда'); await p.click('[data-speed=turbo]');
     await p.click('[data-action=all]');
-    await p.waitForFunction(() => /^Готово/.test(document.querySelector('.msa-status')?.textContent || ''), null, { timeout: 600000 });
+    await p.waitForFunction(() => /^Готово\. Сохранено/.test(document.querySelector('.msa-status')?.textContent || ''), null, { timeout: 600000 });
     const first = await p.textContent('.msa-status');
     if (await p.$eval('.msa-results', (e) => e.hidden)) await p.click('.msa-results-toggle');
     await p.waitForSelector('.msa-card [data-action=retry]');
