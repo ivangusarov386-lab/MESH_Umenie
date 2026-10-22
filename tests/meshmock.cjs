@@ -12,7 +12,7 @@ const QUESTIONS = [
   ["Мышление", "Делает выводы"]
 ];
 function journalPage(o) {
-  const opts = Object.assign({ label: "5-Е-3", students: ["Алимов Леон", "Бакиров Родион", "Баталов Прохор", "Борисов Иван", "Бредихина Маргарита", "Гулаев Руслан"], stale: "remove", rerender: 900, blink: false, dialog: true, spinner: true, failSave: [], rowsDelay: 600, popupDelay: 250 }, o);
+  const opts = Object.assign({ label: "5-Е-3", students: ["Алимов Леон", "Бакиров Родион", "Баталов Прохор", "Борисов Иван", "Бредихина Маргарита", "Гулаев Руслан"], stale: "remove", rerender: 900, reload: 0, blink: false, dialog: true, spinner: true, failSave: [], failOnce: [], rowsDelay: 600, popupDelay: 250 }, o);
   return `<!doctype html><meta charset=utf-8><body style="font:14px sans-serif;margin:0">
 <h4 style="margin:12px">Журнал Физическая культура ${opts.label} 26-27 г.</h4><table id=j></table>
 <script>
@@ -43,9 +43,16 @@ function openForm(n){
  const upd=()=>{const v=vals();s.disabled=v.some(x=>!x)||JSON.stringify(v)===JSON.stringify(prev||null);};
  build(false); f.addEventListener('change',upd);
  if(O.rerender) setTimeout(()=>{build(true);upd();},O.rerender);
+ // «Загрузка данных ученика»: через 0,5 с вопросы сменяются индикатором загрузки
+ // на O.reload мс (как будто МЭШ тянет оценки по всем предметам), затем возвращаются.
+ if(O.reload) setTimeout(()=>{ sc.innerHTML='<div role="progressbar" class="MuiCircularProgress-root" style="margin:40px">Загрузка…</div>'; s.disabled=true;
+   setTimeout(()=>{ build(true); upd(); }, O.reload); }, 500);
  if(O.blink) setTimeout(()=>{ if(!f.isConnected) return; f.remove(); setTimeout(()=>document.body.append(f),500);},2500);
  s.onclick=()=>{ if(s.disabled) return; const v=vals(); window.events.push('save:'+n);
-   const finish=()=>{ if(O.failSave.includes(n)){ const e=document.createElement('div');e.textContent='Ошибка сохранения';f.append(e);s.textContent='Сохранить';return; }
+   const once=JSON.parse(localStorage.getItem('failedOnce')||'{}');
+   const failNow=O.failSave.includes(n)||(O.failOnce.includes(n)&&!once[n]);
+   if(O.failOnce.includes(n)&&!once[n]){once[n]=1;localStorage.setItem('failedOnce',JSON.stringify(once));}
+   const finish=()=>{ if(failNow){ const e=document.createElement('div');e.textContent='Ошибка сохранения';f.append(e);s.textContent='Сохранить';return; }
      store[n]=v;persist();closeDrawer(f);};
    if(O.spinner){s.textContent='Сохранение...';s.disabled=true;setTimeout(finish,800);} else finish(); };
  f.querySelector('.c').onclick=()=>{ const any=vals().some(Boolean)&&JSON.stringify(vals())!==JSON.stringify(prev||null);

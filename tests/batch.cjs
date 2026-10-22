@@ -22,7 +22,7 @@ const profileDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'msa-prof-'));
 const { chromium } = require(PW);
 const { journalPage } = require('./meshmock.cjs');
 const J = {
-  "111": { label: "5-Е-3", students: ["Алимов Леон", "Бакиров Родион", "Баталов Прохор"], stale: "hidden" },
+  "111": { label: "5-Е-3", students: ["Алимов Леон", "Бакиров Родион", "Баталов Прохор"], stale: "hidden", failOnce: ["Бакиров Родион"] },
   "222": { label: "6-А", students: ["Гулаев Руслан", "Дранчук Ксения", "Егоров Марк"], blink: true, failSave: ["Дранчук Ксения"] },
   "333": { label: "7-Б", students: ["Зацепа Мария", "Иванов Пётр"], stale: "shell", rerender: 2000 }
 };
@@ -41,7 +41,7 @@ if(par==='5')fill();else sec.querySelector('h6').onclick=fill;});</script>`;
   const fixWorker = async (w) => { await w.waitForLoadState().catch(() => {}); if (!w.url().startsWith('https://school.mos.ru')) await w.goto('https://school.mos.ru/teacher/study-process/journal/grade/111?logon_source=teacher_mentor_journals'); };
   await p.goto('https://school.mos.ru/teacher/study-process/journal/grade/111');
   await p.waitForSelector('#mesh-skills-panel');
-  await p.evaluate(() => localStorage.setItem('saved', '{}'));
+  await p.evaluate(() => { localStorage.setItem('saved', '{}'); localStorage.removeItem('failedOnce'); });
   await p.click('[data-action=classes]'); await p.click('.msa-picker [data-action=load]');
   await p.waitForSelector('.msa-picker-class', { timeout: 20000 });
   await p.goto('https://school.mos.ru/teacher/study-process/journal/grade/111'); await p.waitForSelector('#mesh-skills-panel');
@@ -58,6 +58,21 @@ if(par==='5')fill();else sec.querySelector('h6').onclick=fill;});</script>`;
   console.log('   итоги:', JSON.stringify(await p.$$eval('.msa-results .msa-card', (l) => l.map((x) => x.querySelector('.msa-card-title b').textContent + ': ' + [...x.querySelectorAll('.msa-chip')].map((ch) => ch.textContent).join('/') + ([...x.querySelectorAll('.msa-card-errors li')].map((li) => ' ⚠ ' + li.textContent).join(''))))));
   const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('saved') || '{}'));
   console.log('   сохранены:', Object.keys(saved).sort().join(', '));
+  // 1б) «Повторить все ошибки»: Бакиров (падал один раз) должен сохраниться,
+  // Дранчук (падает всегда) — снова ошибка; остальных не трогаем.
+  await p.waitForTimeout(1500);
+  const savesBefore = Object.keys(await p.evaluate(() => JSON.parse(localStorage.getItem('saved') || '{}'))).length;
+  if (await p.$eval('.msa-results', (e) => e.hidden)) await p.click('.msa-results-toggle');
+  await p.waitForSelector('[data-action=retry-all]');
+  console.log('1б) кнопка:', (await p.textContent('[data-action=retry-all]')).replace(/\s+/g, ' ').trim());
+  await p.click('[data-action=retry-all]');
+  const wr = await c.waitForEvent('page'); await fixWorker(wr);
+  await p.waitForFunction(() => /Готово: пройдено/.test(document.querySelector('.msa-status')?.textContent || ''), null, { timeout: 600000 });
+  await p.waitForTimeout(1500);
+  const after = await p.evaluate(() => JSON.parse(localStorage.getItem('saved') || '{}'));
+  console.log('    лента повтора:', JSON.stringify(await p.$$eval('.msa-log li', (l) => l.map((x) => x.querySelector('.msa-log-name').textContent + ' — ' + x.querySelector('.msa-log-msg').textContent.slice(0, 40)))));
+  console.log('    сохранено было', savesBefore, '→ стало', Object.keys(after).length, '| Бакиров сохранён:', !!after['Бакиров Родион'], '| Дранчук:', !!after['Дранчук Ксения']);
+  console.log('    итоги:', JSON.stringify(await p.$$eval('.msa-results .msa-card', (l) => l.map((x) => x.querySelector('.msa-card-title b').textContent + ': ' + [...x.querySelectorAll('.msa-chip')].map((ch) => ch.textContent).join('/')))));
   // 2) закрыть фоновую вкладку руками посреди обхода
   await p.evaluate(() => localStorage.setItem('saved', '{}'));
   await p.click('[data-action=classes]'); await p.click('[data-action=start]');

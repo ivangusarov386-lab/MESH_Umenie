@@ -31,7 +31,9 @@ const SCEN = [
   { name: "S6 у одного не сохраняется", o: { failSave: ["Борисов Иван"] } },
   { name: "S7 часть уже оценена", o: {}, rated: ["Бакиров Родион", "Гулаев Руслан"] },
   { name: "S8 ответ «Часто» + Турбо", o: {}, answer: "Часто", speed: "turbo" },
-  { name: "S9 всё сразу", o: { stale: "hidden", blink: true, rerender: 1500, failSave: ["Баталов Прохор"] }, rated: ["Алимов Леон"], speed: "turbo" }
+  { name: "S10 долгая загрузка ученика (6 с)", o: { rerender: 0, reload: 6000 } },
+  { name: "S11 очень долгая загрузка (12 с) + мигание", o: { rerender: 0, reload: 12000, blink: true } },
+  { name: "S9 всё сразу", o: { stale: "hidden", blink: true, rerender: 0, reload: 5000, failSave: ["Баталов Прохор"] }, rated: ["Алимов Леон"], speed: "turbo" }
 ];
 const only = process.argv[2];
 (async () => {
@@ -79,6 +81,30 @@ const only = process.argv[2];
     console.log(`${problems.length ? '✗' : '✓'} ${sc.name} — ${secs} с — ${st.status}`);
     problems.forEach((x) => console.log('    ! ' + x));
     if (problems.length || only) st.log.forEach((l) => console.log('      · ' + l.slice(0, 160)));
+  }
+  // S12: «Повторить ошибки» — у двоих сохранение падает только с первого раза.
+  if (!only || 'S12'.startsWith(only) || only === 'S12') {
+    current = { failOnce: ["Бакиров Родион", "Борисов Иван"] };
+    await p.goto('https://school.mos.ru/teacher/study-process/journal/grade/512');
+    await p.evaluate(() => { localStorage.setItem('saved', '{}'); localStorage.removeItem('failedOnce'); });
+    await p.reload(); await p.waitForSelector('#mesh-skills-panel');
+    await p.waitForFunction(() => /Учеников в журнале: 6/.test(document.querySelector('.msa-count')?.textContent || ''));
+    await p.selectOption('[data-answer]', 'Почти всегда'); await p.click('[data-speed=turbo]');
+    await p.click('[data-action=all]');
+    await p.waitForFunction(() => /^Готово/.test(document.querySelector('.msa-status')?.textContent || ''), null, { timeout: 600000 });
+    const first = await p.textContent('.msa-status');
+    if (await p.$eval('.msa-results', (e) => e.hidden)) await p.click('.msa-results-toggle');
+    await p.waitForSelector('.msa-card [data-action=retry]');
+    const label = await p.textContent('.msa-card [data-action=retry]');
+    const savesBefore = await p.evaluate(() => window.events.filter((e) => e.startsWith('save:')).length);
+    await p.click('.msa-card [data-action=retry]');
+    await p.waitForFunction(() => /^Повтор ошибок готов/.test(document.querySelector('.msa-status')?.textContent || ''), null, { timeout: 600000 });
+    const st = await p.evaluate(() => ({ saved: Object.keys(window.saved).sort(), events: window.events, log: [...document.querySelectorAll('.msa-log li')].map((li) => li.querySelector('.msa-log-name').textContent) }));
+    const newSaves = st.events.filter((e) => e.startsWith('save:')).length - savesBefore;
+    const cardText = await p.$eval('.msa-card', (e) => e.innerText.replace(/\n/g, ' '));
+    const okS12 = st.saved.length === 6 && st.log.length === 2 && newSaves === 2 && !/Повторить ошибки/.test(cardText);
+    if (!okS12) failures += 1;
+    console.log(`${okS12 ? '✓' : '✗'} S12 повтор ошибок — 1-й прогон: «${first}»; кнопка «${label.trim()}»; при повторе прошли: ${st.log.join(', ')}; новых сохранений: ${newSaves}; сохранены все 6: ${st.saved.length === 6}; на карточке ошибок не осталось: ${!/Повторить ошибки/.test(cardText)}`);
   }
   console.log(failures ? `ПРОВАЛЕНО сценариев: ${failures}` : 'ВСЕ СЦЕНАРИИ ПРОШЛИ');
   await c.close();

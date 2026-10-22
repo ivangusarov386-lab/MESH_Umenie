@@ -318,13 +318,48 @@
     return withOptions[withOptions.length - 1] || null;
   }
 
-  // Форма МЭШ на долю секунды пропадает из DOM, когда перерисовывается
-  // (догрузка ученика). Одна неудачная проверка — ещё не «форма закрылась»:
-  // ждём, не появится ли снова.
-  const FORM_GRACE_MS = 4000;
+  // Форма на экране (даже без вопросов) — её «оболочка». Спрятанные и
+  // уехавшие за экран старые формы сюда не попадают.
+  function onScreen(el) {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.right > 0 && r.left < window.innerWidth && r.bottom > 0 && r.top < window.innerHeight;
+  }
 
-  function waitForForm(ms = FORM_GRACE_MS) {
-    return waitFor(findForm, ms);
+  function formShell() {
+    const list = formCandidates().filter(onScreen);
+    return list[list.length - 1] || null;
+  }
+
+  const LOADING_SELECTOR = '[role="progressbar"], .MuiCircularProgress-root, .MuiSkeleton-root, .MuiLinearProgress-root, [aria-busy="true"]';
+
+  function isLoading(form) {
+    return !!form && [...form.querySelectorAll(LOADING_SELECTOR)].some(isVisible);
+  }
+
+  // Готовая форма: вопросы на месте и нет индикатора загрузки.
+  function readyForm() {
+    const f = findForm();
+    return f && !isLoading(f) ? f : null;
+  }
+
+  // Живой баг v0.9.4: форма открывается, вопросы видны, потом МЭШ на несколько
+  // секунд меняет их на загрузку (тянет оценки ученика «по всем предметам»).
+  // Ждали 4 с → «форма пропала» → вторая попытка (уже из кэша — быстро).
+  // Теперь: пока оболочка формы на экране — она грузится, ждём до
+  // FORM_LOAD_MAX_MS; если оболочки нет — после FORM_GRACE_MS считаем, что
+  // формы нет (мигание при перерисовке короче).
+  const FORM_GRACE_MS = 4000;
+  const FORM_LOAD_MAX_MS = 30000;
+
+  async function waitForForm(graceMs = FORM_GRACE_MS) {
+    const start = Date.now();
+    const res = await waitFor(() => {
+      const f = readyForm();
+      if (f) return f;
+      if (!formShell() && Date.now() - start > graceMs) return "gone";
+      return null;
+    }, FORM_LOAD_MAX_MS);
+    return res && res !== "gone" ? res : null;
   }
 
   // «Отмена» при отметках в форме вызывает диалог «Выход без сохранения» —
@@ -333,7 +368,7 @@
     // Ждём либо диалог, либо закрытия формы (тогда диалога не будет).
     const outcome = await waitFor(() => {
       if (textEls(TXT_DISCARD_TITLE).length) return buttonsWithText(TXT_DISCARD_CONFIRM)[0] || null;
-      return findForm() ? null : "closed";
+      return findForm() || formShell() ? null : "closed";
     }, timeoutMs);
     const btn = outcome && outcome !== "closed" ? outcome : null;
     if (btn) {
@@ -348,7 +383,7 @@
     if (!cancel) return;
     await humanClick(cancel);
     await confirmDiscardIfAsked();
-    await waitFor(() => !findForm(), 4000);
+    await waitFor(() => !findForm() && !formShell(), 4000);
   }
 
   async function openPopupFor(student) {
@@ -469,11 +504,11 @@
   async function fillUntilStable() {
     let stats = { questions: 0, checked: 0 };
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const form = findForm() || (await waitForForm());
+      const form = readyForm() || (await waitForForm());
       if (!form || stopRequested) return stats;
       await fillForm(form);
       await waitStable(500, 6000);
-      const fresh = findForm() || (await waitForForm());
+      const fresh = readyForm() || (await waitForForm());
       stats = fresh ? formStats(fresh) : stats;
       if (isComplete(stats)) return stats;
       log("после заполнения отметки слетели, повторяю", stats);
@@ -494,10 +529,16 @@
       if (enabled) {
         await sleep(pace(rand(350, 800), 80));
         await humanClick(enabled);
-        const closed = await waitFor(() => !findForm(), SAVE_CLOSE_TIMEOUT_MS);
-        return closed ? "saved" : "not-closed";
+        // Закрыта = нет формы с вопросами и не видно идущего сохранения.
+        const closed = await waitFor(() => {
+          if (findForm()) return false;
+          const shell = formShell();
+          return !shell || !isLoading(shell);
+        }, SAVE_CLOSE_TIMEOUT_MS);
+        if (closed) await waitFor(() => !findForm() && !(formShell() && isLoading(formShell())), 1500);
+        return closed && !findForm() ? "saved" : "not-closed";
       }
-      const form = findForm() || (await waitForForm());
+      const form = readyForm() || (await waitForForm());
       if (!form) return "not-closed";
       const stats = formStats(form);
       // «Уже было» — только если форма открылась УЖЕ заполненной (до наших кликов)
@@ -536,6 +577,7 @@
       `заголовок формы: ${titleInfo}`,
       `«Сохранить»: ${buttonsWithText(TXT_SAVE).length}`,
       `форм видно: ${formCandidates().length}`,
+      `загрузка в форме: ${formShell() && isLoading(formShell()) ? "да" : "нет"}`,
       `попап: ${findPopup() ? "открыт" : "нет"}`,
       `диалог «Выход без сохранения»: ${textEls(TXT_DISCARD_TITLE).length ? "да" : "нет"}`,
       `вкладка: ${document.hidden ? "фоновая" : "видимая"}`
@@ -553,7 +595,7 @@
       if (stopRequested) return { result: { status: "stopped" } };
       if (attempt > 1) {
         // Форма «вернулась», пока мы собирались переоткрывать, — берём её.
-        const back = await waitForForm(1500);
+        const back = readyForm() || (formShell() ? await waitForForm(1500) : null);
         if (back) return { form: back, attempt: attempt - 1, firstDiag };
         await cleanupAfterError();
         await sleep(pace(900, 400));
@@ -588,7 +630,12 @@
       }
       // При перепроверке ждём дольше — нужно точно увидеть сохранённые ответы.
       await (recheck ? waitStable(1500, 10000) : waitStable(600, 8000));
-      const form = findForm() || (await waitForForm());
+      // Форма может уйти в загрузку данных ученика — дожидаемся готовой.
+      let form = await waitForForm();
+      if (form) {
+        await waitStable(500, 6000);
+        form = readyForm() || (await waitForForm());
+      }
       if (form) return { form, attempt, firstDiag };
       lastDiag = describePage();
       firstDiag = firstDiag || lastDiag;
@@ -598,7 +645,7 @@
   }
 
   async function processStudent(student, { save, recheck = false }) {
-    if (findForm()) return { status: "error", message: "уже открыта другая форма — закройте её" };
+    if (findForm() || formShell()) return { status: "error", message: "уже открыта другая форма — закройте её" };
 
     const openedForm = await openFormFor(student, recheck);
     if (openedForm.result) return openedForm.result;
@@ -606,9 +653,9 @@
     // (ждём немного — форма может сначала показать прежнего ученика).
     const surname = student.name.split(" ")[0];
     const form = (await waitFor(() => {
-      const f = findForm();
+      const f = readyForm();
       return f && (!surname || norm(f.textContent).includes(surname)) ? f : null;
-    }, FORM_GRACE_MS)) || findForm() || openedForm.form;
+    }, FORM_GRACE_MS)) || readyForm() || openedForm.form;
     if (surname && !norm(form.textContent).includes(surname)) {
       return { status: "error", message: `в форме другой ученик (ожидался ${student.name})`, fatal: true };
     }
@@ -764,10 +811,11 @@
   async function cleanupAfterError() {
     // Диалог мог остаться от прошлой попытки.
     await confirmDiscardIfAsked(300);
-    const form = findForm();
+    // Форма может быть посреди загрузки (без вопросов) — закрываем и такую.
+    const form = findForm() || formShell();
     if (form) await cancelForm(form);
     await closePopup();
-    return !findForm() && !findPopup();
+    return !findForm() && !formShell() && !findPopup();
   }
 
   // ---------- сценарии ----------
@@ -778,26 +826,30 @@
   // обход: форма закрывается «Отменой», ученик попадает в результаты с ошибкой
   // (дозаполнить вручную). Журнал бросаем, только если не удалось закрыть
   // форму или ошибки идут подряд — значит, что-то сломалось системно.
-  async function runJournal({ limit = Infinity, save = true, journal = null, prefix = "" } = {}) {
+  // only — список ФИО: пройти только этих учеников (повтор ошибок).
+  async function runJournal({ limit = Infinity, save = true, journal = null, prefix = "", only = null } = {}) {
     const done = new Set();
+    const onlySet = Array.isArray(only) && only.length ? new Set(only) : null;
+    const wanted = (s) => !done.has(s.name) && (!onlySet || onlySet.has(s.name));
     const counters = { saved: 0, already: 0, error: 0 };
     let errorsInRow = 0;
     let aborted = "";
     let processed = 0;
     while (processed < limit && !stopRequested) {
-      let next = studentRows().find((s) => !done.has(s.name));
+      if (onlySet && [...onlySet].every((n) => done.has(n))) break;
+      let next = studentRows().find(wanted);
       if (!next) {
         // Таблица может дорисовывать строки при прокрутке — пробуем докрутить вниз.
         const all = studentRows();
         all[all.length - 1]?.nameEl.scrollIntoView({ block: "end" });
         await sleep(600);
-        next = studentRows().find((s) => !done.has(s.name));
+        next = studentRows().find(wanted);
         if (!next) break;
       }
       done.add(next.name);
       processed += 1;
       setStatus(`${prefix}${processed}. ${next.name}…`);
-      setProgress((processed - 1) / Math.max(processed, Math.min(limit, studentRows().length)));
+      setProgress((processed - 1) / Math.max(processed, Math.min(limit, onlySet ? onlySet.size : studentRows().length)));
 
       const res = await processStudent(next, { save });
       if (res.status === "stopped") break;
@@ -824,10 +876,11 @@
       await sleep(pace(rand(250, 500), 60));
     }
     setProgress(null);
-    return { counters, aborted, processed };
+    const missing = onlySet ? [...onlySet].filter((n) => !done.has(n)) : [];
+    return { counters, aborted, processed, missing };
   }
 
-  async function runAll({ limit = Infinity, save = true } = {}) {
+  async function runAll({ limit = Infinity, save = true, only = null } = {}) {
     if (running) return;
     running = true;
     stopRequested = false;
@@ -836,9 +889,10 @@
     try {
       const id = currentJournalId();
       const journal = id ? { id, title: currentJournalTitle() } : null;
-      const { counters, aborted } = await runJournal({ limit, save, journal });
+      const { counters, aborted, missing } = await runJournal({ limit, save, journal, only });
       if (aborted) await markJournalNote(journal, aborted);
-      const tail = stopRequested ? "Остановлено." : aborted ? `Прервано: ${aborted}.` : "Готово.";
+      const lost = missing?.length ? ` Не найдены в журнале: ${missing.join(", ")}.` : "";
+      const tail = (stopRequested ? "Остановлено." : aborted ? `Прервано: ${aborted}.` : only ? "Повтор ошибок готов." : "Готово.") + lost;
       if (!save) setStatus(`${tail} Форма заполнена, сохраните вручную или нажмите «Отмена».`);
       else setStatus(`${tail} Сохранено: ${counters.saved}, уже было: ${counters.already}, ошибок: ${counters.error}.`, counters.error || aborted ? "error" : "ok");
       renderResults();
@@ -856,14 +910,14 @@
 
   // Обход идёт в отдельной ФОНОВОЙ вкладке (её открывает service worker),
   // а панель в текущей вкладке только показывает ход работы.
-  async function startAllClasses(selected) {
+  async function startAllClasses(selected, { retry = false } = {}) {
     if (!selected.length) {
       setStatus("Не выбрано ни одного класса.", "error");
       return;
     }
     const canBackground = !!globalThis.chrome?.runtime?.id && useBackgroundTab;
     await setStorage(PROGRESS_KEY, { text: "Открываю фоновую вкладку…", tone: "", fraction: null, log: [], at: Date.now() });
-    await setStorage(BATCH_KEY, { status: "running", mode: canBackground ? "background" : "same-tab", queue: selected, index: 0, startedAt: Date.now(), visits: 0 });
+    await setStorage(BATCH_KEY, { status: "running", mode: canBackground ? "background" : "same-tab", retry, queue: selected, index: 0, startedAt: Date.now(), visits: 0 });
     if (!canBackground) {
       setStatus(`Старт: классов — ${selected.length}. Перехожу в первый журнал…`);
       await sleep(pace(rand(500, 900), 150));
@@ -872,7 +926,9 @@
     }
     setBusy(true);
     clearLog();
-    setStatus(`Обход ${selected.length} класс(ов) идёт в фоновой вкладке — можно работать дальше.`);
+    setStatus(retry
+      ? `Повтор ошибок (${selected.reduce((n, q) => n + (q.only?.length || 0), 0)} уч.) идёт в фоновой вкладке — можно работать дальше.`
+      : `Обход ${selected.length} класс(ов) идёт в фоновой вкладке — можно работать дальше.`);
     chrome.runtime.sendMessage({ source: "mesh-skills", type: "start-worker", url: location.origin + journalUrl(selected[0].id) }, (res) => {
       void chrome.runtime.lastError;
       if (res?.ok) return;
@@ -1086,7 +1142,7 @@
     if (!item) return finishBatch(batch, "Все классы пройдены.");
     forcedVisible = true;
     ensurePanel();
-    const prefix = `Класс ${batch.index + 1} из ${batch.queue.length} (${item.classLabel || item.text}) · `;
+    const prefix = `${batch.retry ? "Повтор ошибок · " : ""}Класс ${batch.index + 1} из ${batch.queue.length} (${item.classLabel || item.text}) · `;
 
     // Открылся не тот журнал (редирект МЭШ, ручной переход) — возвращаемся,
     // но не бесконечно: после 3 попыток класс пропускаем.
@@ -1117,7 +1173,7 @@
       if (!ok) {
         aborted = "в журнале не найдены ученики";
       } else {
-        const res = await runJournal({ save: true, journal, prefix });
+        const res = await runJournal({ save: true, journal, prefix, only: item.only || null });
         aborted = res.aborted;
       }
       await markJournalNote(journal, aborted);
@@ -1426,6 +1482,27 @@
 
   const STATUS_TEXT = { saved: "сохранено", already: "уже оценён", error: "ошибка", filled: "заполнено без сохранения" };
 
+  // ---------- повтор ошибок ----------
+  // Ученики со статусом «ошибка» в результатах. Свой журнал — прямо здесь;
+  // другие журналы (или несколько) — обходом, как «Все мои классы», но в
+  // каждом журнале только эти ученики.
+  function errorNames(entry) {
+    return Object.entries(entry?.students || {}).filter(([, st]) => st.status === "error").map(([name]) => name);
+  }
+
+  async function retryErrors(entries) {
+    const list = entries.map((e) => ({ id: e.id, text: e.title, classLabel: e.classLabel || "", only: errorNames(e) })).filter((q) => q.only.length);
+    if (!list.length) {
+      setStatus("Учеников с ошибками нет.", "ok");
+      return;
+    }
+    if (list.length === 1 && String(list[0].id) === String(currentJournalId())) {
+      await runAll({ save: true, only: list[0].only });
+      return;
+    }
+    await startAllClasses(list, { retry: true });
+  }
+
   function chip(kind, value, title) {
     const c = el("span", { class: `msa-chip msa-chip--${kind}`, title });
     c.append(icon(kind === "saved" ? "check" : kind === "already" ? "refresh" : "alert"), el("span", {}, String(value)));
@@ -1471,11 +1548,26 @@
         });
         details.append(ul);
       }
+      const links = el("div", { class: "msa-card-links" });
+      if (errors.length) {
+        const retry = el("button", { class: "msa-link", type: "button", "data-action": "retry", title: "Ещё раз пройти только учеников с ошибкой" });
+        retry.append(icon("refresh"), el("span", {}, `Повторить ошибки (${errors.length})`));
+        retry.addEventListener("click", () => retryErrors([entry]));
+        links.append(retry);
+      }
       const open = el("a", { href: journalUrl(entry.id), class: "msa-link msa-card-open" });
       open.append(el("span", {}, "Открыть журнал"), icon("external"));
-      details.append(open);
+      links.append(open);
+      details.append(links);
       box.append(details);
     });
+    const withErrors = entries.filter((e) => errorNames(e).length);
+    if (withErrors.length) {
+      const total = withErrors.reduce((n, e) => n + errorNames(e).length, 0);
+      const retryAll = button({ action: "retry-all", label: `Повторить все ошибки (${total})`, hint: withErrors.length > 1 ? `в ${withErrors.length} журналах, только эти ученики` : "только эти ученики", iconName: "refresh", onClick: () => retryErrors(withErrors) });
+      retryAll.classList.add("msa-btn--block");
+      box.append(retryAll);
+    }
     const actions = el("div", { class: "msa-row" });
     actions.append(
       button({ label: "Отчёт CSV", iconName: "download", onClick: downloadResultsCsv }),
