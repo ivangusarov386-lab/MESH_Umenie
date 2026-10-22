@@ -43,17 +43,36 @@ if(par==='5')fill();else sec.querySelector('h6').onclick=fill;});</script>`;
   await p.waitForSelector('#mesh-skills-panel');
   await p.evaluate(() => { localStorage.setItem('saved', '{}'); localStorage.removeItem('failedOnce'); });
   await p.click('[data-action=classes]'); await p.click('.msa-picker [data-action=load]');
-  await p.waitForSelector('.msa-picker-class', { timeout: 20000 });
+  await p.waitForSelector('.msa-par-toggle', { timeout: 20000 });
   await p.goto('https://school.mos.ru/teacher/study-process/journal/grade/111'); await p.waitForSelector('#mesh-skills-panel');
-  await p.click('[data-action=classes]'); await p.waitForSelector('.msa-picker-class');
+  await p.click('[data-action=classes]'); await p.waitForSelector('.msa-par-toggle');
   await p.click('[data-speed=turbo]');
+  // 0) параллели свёрнуты; раскрыть 6-ю, снять/поставить класс, свернуть
+  const pick = () => p.evaluate(() => ({
+    visibleClasses: [...document.querySelectorAll('.msa-picker-class')].filter((e) => e.offsetParent).length,
+    counts: [...document.querySelectorAll('.msa-par-count')].map((e) => e.textContent),
+    start: document.querySelector('[data-action=start]').textContent }));
+  console.log('0) по умолчанию:', JSON.stringify(await pick()));
+  await p.click('.msa-picker-group:nth-of-type(2) .msa-par-toggle');
+  console.log('   раскрыта 6-я:', JSON.stringify(await pick()));
+  await p.click('.msa-picker-class input[data-id="222"]');
+  console.log('   сняли 6-А:', JSON.stringify(await pick()), '| 6-я «частично»/пусто:', await p.$eval('.msa-picker-parallel input[data-parallel="6"]', (e) => e.checked + '/' + e.indeterminate));
+  await p.click('.msa-picker-class input[data-id="222"]');
+  await p.click('.msa-picker-group:nth-of-type(2) .msa-par-toggle');
+  console.log('   вернули и свернули:', JSON.stringify(await pick()));
   // 1) полный обход в фоне
   const t0 = Date.now();
   await p.click('[data-action=start]');
   const w = await c.waitForEvent('page'); await fixWorker(w);
   await w.waitForSelector('#mesh-skills-panel', { timeout: 20000 });
   console.log('фоновая вкладка скрыта (document.hidden):', await w.evaluate(() => document.hidden), '| основная:', await p.evaluate(() => document.hidden));
+  // во время выставления повторять ошибки нельзя
+  if (await p.$eval('.msa-results', (e) => e.hidden)) await p.click('.msa-results-toggle');
+  await p.waitForFunction(() => document.querySelector('.msa-card-errors'), null, { timeout: 600000 });
+  console.log('   во время работы: кнопок повтора', await p.$$eval('[data-action=retry], [data-action=retry-all]', (l) => l.length), '| подсказка:', await p.evaluate(() => [...document.querySelectorAll('.msa-results .msa-note')].map((e) => e.textContent).join('')));
   await p.waitForFunction(() => /Готово: пройдено/.test(document.querySelector('.msa-status')?.textContent || ''), null, { timeout: 900000 });
+  await p.waitForTimeout(800);
+  console.log('   после окончания: кнопок повтора', await p.$$eval('[data-action=retry], [data-action=retry-all]', (l) => l.length));
   console.log('1) обход 3 классов:', ((Date.now() - t0) / 1000).toFixed(0), 'с; вкладка закрыта:', w.isClosed());
   console.log('   итоги:', JSON.stringify(await p.$$eval('.msa-results .msa-card', (l) => l.map((x) => x.querySelector('.msa-card-title b').textContent + ': ' + [...x.querySelectorAll('.msa-chip')].map((ch) => ch.textContent).join('/') + ([...x.querySelectorAll('.msa-card-errors li')].map((li) => ' ⚠ ' + li.textContent).join(''))))));
   const saved = await p.evaluate(() => JSON.parse(localStorage.getItem('saved') || '{}'));

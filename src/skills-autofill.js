@@ -1340,10 +1340,17 @@
     list.scrollTop = list.scrollHeight;
   }
 
+  function isBusy() {
+    return running || !!panel()?.classList.contains("msa-busy");
+  }
+
   function setBusy(busy) {
     const root = panel();
     if (!root) return;
+    const changed = root.classList.contains("msa-busy") !== !!busy;
     root.classList.toggle("msa-busy", !!busy);
+    // Кнопки повтора ошибок есть только когда ничего не идёт — перерисовать.
+    if (changed) renderResults();
     if (!busy) setProgressBar(null);
     root.querySelectorAll("[data-action]").forEach((b) => {
       if (b.dataset.action === "stop") b.disabled = !busy;
@@ -1376,6 +1383,9 @@
     const box = panel()?.querySelector(".msa-picker");
     if (btn) btn.setAttribute("aria-expanded", String(!!box && !box.hidden));
   }
+
+  // Какие параллели раскрыты — живёт, пока открыта страница.
+  const expandedParallels = new Set();
 
   async function renderPicker(open) {
     const box = panel()?.querySelector(".msa-picker");
@@ -1419,21 +1429,38 @@
     });
     const parallelBoxes = [];
     const classBoxes = [];
+    // Параллели по умолчанию свёрнуты: галочка — вся параллель, клик по
+    // названию — раскрыть/свернуть список её классов.
+    const counters = [];
     [...groups.keys()].sort((a, b) => Number(a) - Number(b)).forEach((key) => {
       const group = el("div", { class: "msa-picker-group" });
-      const pLabel = el("label", { class: "msa-picker-item msa-picker-parallel" });
-      const pCb = el("input", { type: "checkbox", "data-parallel": key });
-      pLabel.append(pCb, document.createTextNode(key === "?" ? " Без параллели" : ` ${key} параллель`));
-      group.append(pLabel);
+      const head = el("div", { class: "msa-picker-item msa-picker-parallel" });
+      const pCb = el("input", { type: "checkbox", "data-parallel": key, "aria-label": `Вся ${key} параллель` });
+      const expanded = expandedParallels.has(key);
+      const toggle = el("button", { class: "msa-par-toggle msa-disclosure", type: "button", "aria-expanded": String(expanded) });
+      const count = el("span", { class: "msa-par-count" });
+      toggle.append(el("span", { class: "msa-par-name" }, key === "?" ? "Без параллели" : `${key} параллель`), count, icon("chevron", "msa-chevron"));
+      head.append(pCb, toggle);
+      group.append(head);
       parallelBoxes.push(pCb);
+      const body = el("div", { class: "msa-picker-classes" });
+      body.hidden = !expanded;
       groups.get(key).forEach((cls) => {
         const label = el("label", { class: "msa-picker-item msa-picker-class" });
         const cb = el("input", { type: "checkbox", "data-id": String(cls.id), "data-parallel": key });
         cb.checked = selected.has(String(cls.id));
         label.append(cb, document.createTextNode(` ${cls.classLabel} — ${cls.text}`));
-        group.append(label);
+        body.append(label);
         classBoxes.push(cb);
       });
+      toggle.addEventListener("click", () => {
+        body.hidden = !body.hidden;
+        toggle.setAttribute("aria-expanded", String(!body.hidden));
+        if (body.hidden) expandedParallels.delete(key);
+        else expandedParallels.add(key);
+      });
+      counters.push({ key, count, total: groups.get(key).length });
+      group.append(body);
       list.append(group);
     });
     box.append(list);
@@ -1450,6 +1477,11 @@
     const sync = () => {
       parallelBoxes.forEach((pCb) => setGroupState(pCb, classBoxes.filter((cb) => cb.dataset.parallel === pCb.dataset.parallel)));
       setGroupState(allCb, classBoxes);
+      counters.forEach(({ key, count, total }) => {
+        const on = classBoxes.filter((cb) => cb.dataset.parallel === key && cb.checked).length;
+        count.textContent = `${on} из ${total}`;
+        count.dataset.on = on ? "1" : "";
+      });
       const n = chosen().length;
       start.textContent = n ? `Начать — выбрано классов: ${n}` : "Выберите классы";
       start.dataset.empty = n ? "" : "1";
@@ -1491,6 +1523,12 @@
   }
 
   async function retryErrors(entries) {
+    // Повтор — только после окончания основного выставления.
+    const batch = await getStorage(BATCH_KEY);
+    if (isBusy() || batch?.status === "running") {
+      setStatus("Повтор ошибок — после окончания текущего выставления.", "error");
+      return;
+    }
     const list = entries.map((e) => ({ id: e.id, text: e.title, classLabel: e.classLabel || "", only: errorNames(e) })).filter((q) => q.only.length);
     if (!list.length) {
       setStatus("Учеников с ошибками нет.", "ok");
@@ -1515,6 +1553,7 @@
     if (!box || box.hidden) return;
     const all = (await getStorage(RESULTS_KEY)) || {};
     const entries = Object.values(all).sort((a, b) => String(a.classLabel || a.title).localeCompare(String(b.classLabel || b.title), "ru", { numeric: true }));
+    const busy = isBusy();
     box.textContent = "";
     if (!entries.length) {
       box.append(el("div", { class: "msa-note" }, "Результатов пока нет — они появятся после первого прогона."));
@@ -1549,7 +1588,7 @@
         details.append(ul);
       }
       const links = el("div", { class: "msa-card-links" });
-      if (errors.length) {
+      if (errors.length && !busy) {
         const retry = el("button", { class: "msa-link", type: "button", "data-action": "retry", title: "Ещё раз пройти только учеников с ошибкой" });
         retry.append(icon("refresh"), el("span", {}, `Повторить ошибки (${errors.length})`));
         retry.addEventListener("click", () => retryErrors([entry]));
@@ -1562,7 +1601,10 @@
       box.append(details);
     });
     const withErrors = entries.filter((e) => errorNames(e).length);
-    if (withErrors.length) {
+    if (withErrors.length && busy) {
+      box.append(el("div", { class: "msa-note" }, "Повторить ошибки можно будет после окончания выставления."));
+    }
+    if (withErrors.length && !busy) {
       const total = withErrors.reduce((n, e) => n + errorNames(e).length, 0);
       const retryAll = button({ action: "retry-all", label: `Повторить все ошибки (${total})`, hint: withErrors.length > 1 ? `в ${withErrors.length} журналах, только эти ученики` : "только эти ученики", iconName: "refresh", onClick: () => retryErrors(withErrors) });
       retryAll.classList.add("msa-btn--block");

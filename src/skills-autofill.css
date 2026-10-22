@@ -570,6 +570,58 @@
   font-weight: 700;
 }
 
+#mesh-skills-panel .msa-picker-parallel {
+  gap: 6px;
+  padding-right: 6px;
+}
+
+#mesh-skills-panel .msa-par-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 4px;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+#mesh-skills-panel .msa-par-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--msa-accent-ring);
+}
+
+#mesh-skills-panel .msa-par-name {
+  flex: 1;
+}
+
+#mesh-skills-panel .msa-par-count {
+  color: var(--msa-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+#mesh-skills-panel .msa-par-count[data-on="1"] {
+  color: var(--msa-accent);
+}
+
+#mesh-skills-panel .msa-par-toggle .msa-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--msa-muted);
+}
+
+#mesh-skills-panel .msa-picker-classes[hidden] {
+  display: none;
+}
+
 #mesh-skills-panel .msa-picker-class {
   padding-left: 33px;
   color: var(--msa-text-2);
